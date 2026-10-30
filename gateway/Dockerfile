@@ -18,9 +18,8 @@ RUN pip install --no-cache-dir \
     "uvicorn>=0.32,<1" \
     "websockets>=14,<17"
 
-# 复制 Gateway 与 PWA 静态资源
-COPY gateway/ ./gateway/
-COPY client/ ./client/
+# 直接复制当前 gateway 目录（已内置 pwa 静态资源）
+COPY . ./gateway/
 
 EXPOSE 8080
 

@@ -1,8 +1,8 @@
 services:
   otty-gateway:
     build:
-      context: ..
-      dockerfile: gateway/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: otty-gateway
     restart: unless-stopped
     ports:

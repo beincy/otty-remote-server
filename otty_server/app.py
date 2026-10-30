@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-from client.pwa import mount_pwa
+from gateway.pwa import mount_pwa
 
 from .cli import EXIT_TIMEOUT, OttyCLI, OttyError
 from .screens import ScreenPage, Screens

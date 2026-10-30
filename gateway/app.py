@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from client.pwa import mount_pwa
+from .pwa import mount_pwa
 
 MIN_SECRET_LENGTH = 16
 FORWARDED_METHODS = ["GET", "POST", "DELETE"]
