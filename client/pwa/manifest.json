@@ -1,0 +1,19 @@
+{
+  "name": "Otty 远程工作台",
+  "short_name": "Otty",
+  "description": "Otty 远程终端工作台（Tab 切换、实时屏幕与快捷按键）",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/pwa/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
