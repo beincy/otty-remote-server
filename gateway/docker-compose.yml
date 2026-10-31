@@ -6,10 +6,10 @@ services:
     container_name: otty-gateway
     restart: unless-stopped
     ports:
-      - "${OTTY_GATEWAY_PORT:-8080}:8080"
+      - "${OTTY_GATEWAY_PORT:-8020}:8020"
     environment:
       OTTY_GATEWAY_HOST: "0.0.0.0"
-      OTTY_GATEWAY_PORT: "8080"
+      OTTY_GATEWAY_PORT: "8020"
       # 至少 16 位字符，本地 main.py 连接时需要配置相同的 key
       OTTY_GATEWAY_REGISTER_KEY: "${OTTY_GATEWAY_REGISTER_KEY:-otty-local-gateway-reg-key-2026}"
       # 可选：自定义跨域白名单（逗号分隔）
@@ -20,7 +20,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/gateway/health', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/gateway/health', timeout=3)",
         ]
       interval: 30s
       timeout: 5s

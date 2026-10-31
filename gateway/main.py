@@ -15,7 +15,7 @@ def main():
         "gateway.app:create_gateway_app",
         factory=True,
         host=os.getenv("OTTY_GATEWAY_HOST", "0.0.0.0"),
-        port=int(os.getenv("OTTY_GATEWAY_PORT", "8080")),
+        port=int(os.getenv("OTTY_GATEWAY_PORT", "8020")),
     )
 
 

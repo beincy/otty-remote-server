@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PIP_TRUSTED_HOST=mirrors.aliyun.com \
     OTTY_GATEWAY_HOST=0.0.0.0 \
-    OTTY_GATEWAY_PORT=8080
+    OTTY_GATEWAY_PORT=8020
 
 WORKDIR /app
 
@@ -21,6 +21,6 @@ RUN pip install --no-cache-dir \
 # 直接复制当前 gateway 目录（已内置 pwa 静态资源）
 COPY . ./gateway/
 
-EXPOSE 8080
+EXPOSE 8020
 
 CMD ["python", "-m", "gateway"]

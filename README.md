@@ -28,8 +28,8 @@ flowchart LR
 ```bash
 uv sync
 export OTTY_GATEWAY_REGISTER_KEY="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
-export OTTY_GATEWAY_PORT=8080
-uv run gateway.py
+export OTTY_GATEWAY_PORT=8020
+uv run python -m gateway
 ```
 
 - 公网入口请配合 HTTPS / WSS 反向代理（如 Nginx / Caddy）。
