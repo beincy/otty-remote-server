@@ -907,7 +907,7 @@ if (window.visualViewport) {
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
-    .register("/sw.js")
+    .register("/otty/sw.js")
     .then((reg) => reg.update())
     .catch(() => {});
   if ("caches" in window) {

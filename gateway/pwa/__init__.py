@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 PWA_DIR = Path(__file__).resolve().parent
+
+# PWA 页面与静态文件的统一路由前缀
+PWA_BASE = "/otty"
 
 
 NO_CACHE_HEADERS = {
@@ -17,6 +20,10 @@ def mount_pwa(app: FastAPI) -> None:
     """Mount the standalone PWA workspace client routes onto a FastAPI app."""
 
     @app.get("/", include_in_schema=False)
+    async def pwa_root_redirect():
+        return RedirectResponse(PWA_BASE + "/", status_code=307)
+
+    @app.get(PWA_BASE, include_in_schema=False)
     async def pwa_index():
         return FileResponse(
             PWA_DIR / "index.html",
@@ -24,7 +31,7 @@ def mount_pwa(app: FastAPI) -> None:
             headers=NO_CACHE_HEADERS,
         )
 
-    @app.get("/manifest.json", include_in_schema=False)
+    @app.get(PWA_BASE + "/manifest.json", include_in_schema=False)
     async def pwa_manifest():
         return FileResponse(
             PWA_DIR / "manifest.json",
@@ -32,7 +39,7 @@ def mount_pwa(app: FastAPI) -> None:
             headers=NO_CACHE_HEADERS,
         )
 
-    @app.get("/sw.js", include_in_schema=False)
+    @app.get(PWA_BASE + "/sw.js", include_in_schema=False)
     async def pwa_sw():
         return FileResponse(
             PWA_DIR / "sw.js",
@@ -40,14 +47,14 @@ def mount_pwa(app: FastAPI) -> None:
             headers=NO_CACHE_HEADERS,
         )
 
-    @app.get("/pwa/icon.svg", include_in_schema=False)
+    @app.get(PWA_BASE + "/icon.svg", include_in_schema=False)
     async def pwa_icon():
         return FileResponse(
             PWA_DIR / "icon.svg",
             media_type="image/svg+xml",
         )
 
-    @app.get("/pwa/styles.css", include_in_schema=False)
+    @app.get(PWA_BASE + "/styles.css", include_in_schema=False)
     async def pwa_styles():
         return FileResponse(
             PWA_DIR / "styles.css",
@@ -55,7 +62,7 @@ def mount_pwa(app: FastAPI) -> None:
             headers=NO_CACHE_HEADERS,
         )
 
-    @app.get("/pwa/app.js", include_in_schema=False)
+    @app.get(PWA_BASE + "/app.js", include_in_schema=False)
     async def pwa_script():
         return FileResponse(
             PWA_DIR / "app.js",
