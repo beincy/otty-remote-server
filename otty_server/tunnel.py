@@ -7,7 +7,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 import websockets
@@ -78,7 +78,13 @@ def load_or_create_credentials(
     )
 
 
-def build_agent_ws_url(gateway_url: str) -> str:
+def build_agent_ws_url(
+    gateway_url: str,
+    *,
+    register_key: str = "",
+    token: str = "",
+    instance_id: str = "",
+) -> str:
     parsed = urlparse(gateway_url.strip())
     scheme_map = {"http": "ws", "https": "wss", "ws": "ws", "wss": "wss"}
     if parsed.scheme not in scheme_map or not parsed.netloc:
@@ -89,7 +95,19 @@ def build_agent_ws_url(gateway_url: str) -> str:
     path = parsed.path.rstrip("/")
     if not path.endswith("/ws/agent"):
         path = f"{path}/ws/agent"
-    return urlunparse(parsed._replace(scheme=scheme_map[parsed.scheme], path=path))
+
+    params: dict[str, str] = {}
+    if parsed.query:
+        params.update(parse_qsl(parsed.query))
+    if register_key:
+        params["register_key"] = register_key
+    if token:
+        params["token"] = token
+    if instance_id:
+        params["instance_id"] = instance_id
+
+    query = urlencode(params) if params else parsed.query
+    return urlunparse(parsed._replace(scheme=scheme_map[parsed.scheme], path=path, query=query))
 
 
 class TunnelClient:
@@ -111,11 +129,18 @@ class TunnelClient:
                 f"{MIN_SECRET_LENGTH} characters"
             )
         self.app = app
-        self.ws_url = build_agent_ws_url(gateway_url)
         self.register_key = register_key.strip()
         self.token = token.strip()
         self.instance_id = (instance_id or default_instance_id(self.token)).strip()
         self.push_interval = push_interval
+        # 注意：先赋值 register_key / token / instance_id，再拼包含 query 参数的 ws_url，
+        # 兜底解决 cpolar / 反代在 WebSocket Upgrade 握手时丢弃自定义 Header 的问题
+        self.ws_url = build_agent_ws_url(
+            gateway_url,
+            register_key=self.register_key,
+            token=self.token,
+            instance_id=self.instance_id,
+        )
         self.subscribers = 0
         self._last_tabs_snapshot: str | None = None
 
