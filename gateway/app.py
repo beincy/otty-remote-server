@@ -22,6 +22,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.routing import Mount
 
 from .pwa import mount_pwa
 
@@ -453,5 +454,10 @@ def create_gateway_app(settings: GatewaySettings | None = None) -> FastAPI:
         token: Annotated[str, Depends(get_token)],
     ):
         return await proxy_http(request, api_path, token, instance_id)
+
+    # Also serve the full application under /otty so reverse proxies that
+    # strip the prefix (Express `app.use('/otty', proxy)` + cpolar tunnels)
+    # still reach every endpoint, and direct access keeps working at both / and /otty.
+    app.router.routes.append(Mount("/otty", app=app.router, name="gateway_subpath"))
 
     return app

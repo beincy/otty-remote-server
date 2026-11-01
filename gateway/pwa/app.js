@@ -138,14 +138,15 @@ function setConnectionStatus(mode, label) {
 
 function apiBasePath() {
   const id = state.instanceId.trim();
-  return id ? `/i/${encodeURIComponent(id)}/api/v1` : "/api/v1";
+  // 相对路径：页面在 /、/otty 或任何反代前缀下都能正确解析
+  return id ? `i/${encodeURIComponent(id)}/api/v1` : "api/v1";
 }
 
 async function apiRequest(path, { method = "GET", params = null, body = null } = {}) {
   if (!state.token) {
     throw new Error("请先配置实例 Token");
   }
-  const url = new URL(apiBasePath() + path, location.origin);
+  const url = new URL(apiBasePath() + path, location.href);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== null && v !== undefined && v !== "") url.searchParams.set(k, v);
@@ -610,8 +611,12 @@ function connectWebSocket() {
   }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const id = state.instanceId.trim();
-  const wsPath = id ? `/i/${encodeURIComponent(id)}/ws` : "/ws/client";
-  const url = `${proto}//${location.host}${wsPath}?token=${encodeURIComponent(state.token)}`;
+  // 相对路径解析，配合 /、/otty 或反代前缀均可
+  const wsPath = id ? `i/${encodeURIComponent(id)}/ws` : "ws/client";
+  const wsUrl = new URL(wsPath, location.href);
+  wsUrl.protocol = proto;
+  wsUrl.searchParams.set("token", state.token);
+  const url = wsUrl.toString();
 
   try {
     ws = new WebSocket(url);
