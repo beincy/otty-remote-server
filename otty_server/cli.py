@@ -61,7 +61,7 @@ class OttyCLI:
 
         try:
             payload = json.loads(stdout)
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             payload = None
         if (
             process.returncode != 0

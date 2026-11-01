@@ -82,7 +82,7 @@ class InstanceSession:
         for ws in list(self.subscribers):
             try:
                 await ws.send_json(payload)
-            except OSError, RuntimeError, WebSocketDisconnect:
+            except (OSError, RuntimeError, WebSocketDisconnect):
                 dead.append(ws)
         for ws in dead:
             self.subscribers.discard(ws)
