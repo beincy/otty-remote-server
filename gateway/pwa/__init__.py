@@ -64,7 +64,7 @@ def _mount_pwa_at(app: FastAPI, base: str) -> None:
 def mount_pwa(app: FastAPI) -> None:
     """Mount the standalone PWA workspace client routes onto a FastAPI app.
 
-    Served at both "/" and "/otty" so it works:
+    Served at "/", "/otty", and "/pwa" so it works:
     - directly: http://host:8020/ or http://host:8020/otty/
     - behind a prefix-stripping reverse proxy (e.g. Express
       ``app.use('/otty', proxy(...))`` + cpolar): the browser still requests
@@ -72,3 +72,4 @@ def mount_pwa(app: FastAPI) -> None:
     """
     _mount_pwa_at(app, "")
     _mount_pwa_at(app, "/otty")
+    _mount_pwa_at(app, "/pwa")

@@ -220,10 +220,24 @@ def _extract_bearer(header_value: str | None) -> str:
     return credentials.strip()
 
 
+_bearer = HTTPBearer(auto_error=False)
+
+
+def get_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            401,
+            "Invalid or missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+
 def create_gateway_app(settings: GatewaySettings | None = None) -> FastAPI:
     settings = settings or GatewaySettings.from_env()
     hub = GatewayHub()
-    bearer = HTTPBearer(auto_error=False)
 
     app = FastAPI(
         title="Otty Gateway",
@@ -240,17 +254,6 @@ def create_gateway_app(settings: GatewaySettings | None = None) -> FastAPI:
             allow_methods=FORWARDED_METHODS,
             allow_headers=["Authorization", "Content-Type", "X-Instance-Id"],
         )
-
-    def get_token(
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
-    ) -> str:
-        if credentials is None or not credentials.credentials:
-            raise HTTPException(
-                401,
-                "Invalid or missing bearer token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return credentials.credentials
 
     @app.get("/gateway/health", tags=["Gateway"])
     async def gateway_health():
