@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
 
@@ -9,7 +10,23 @@ from otty_server.app import TRUTHY, Settings, create_app
 from otty_server.tunnel import TunnelClient, load_or_create_credentials
 
 
+def load_dotenv(dotenv_path: Path | None = None) -> None:
+    path = dotenv_path or (Path(__file__).resolve().parent / ".env")
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="Otty Server: connect local Otty to Gateway over WebSocket "
         "(and optionally listen for local HTTP debugging)."
@@ -82,7 +99,9 @@ async def run(args: argparse.Namespace):
     if args.listen or not gateway_url:
         print(f"Local PWA   : http://{args.host}:{args.port}/#token={creds.token}")
         print(f"Local HTTP  : http://{args.host}:{args.port}/api/v1/tabs")
-        config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+        config = uvicorn.Config(
+            app, host=args.host, port=args.port, log_level="error", access_log=False
+        )
         server = uvicorn.Server(config)
         tasks.append(asyncio.create_task(server.serve()))
 
@@ -92,7 +111,7 @@ async def run(args: argparse.Namespace):
 
 def main():
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        level=logging.ERROR, format="%(asctime)s %(levelname)s %(message)s"
     )
     args = parse_args()
     try:

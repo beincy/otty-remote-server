@@ -253,7 +253,7 @@ def test_client_websocket_push_and_rpc():
     [
         ("/", "text/html", "apple-mobile-web-app-capable"),
         ("/manifest.json", "application/manifest+json", '"display": "standalone"'),
-        ("/sw.js", "application/javascript", "otty-pwa-v6"),
+        ("/sw.js", "application/javascript", "otty-pwa-v7"),
         ("/pwa/styles.css", "text/css", "overscroll-behavior: none"),
         ("/pwa/app.js", "application/javascript", "otty_pwa_state_v1"),
         ("/pwa/icon.svg", "image/svg+xml", "<svg"),

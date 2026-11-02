@@ -281,7 +281,7 @@ class TunnelClient:
             except asyncio.CancelledError:
                 raise
             except (OSError, RuntimeError, websockets.WebSocketException) as exc:
-                logger.warning(
+                logger.error(
                     "Gateway tunnel disconnected (%s); retrying in %.1fs", exc, backoff
                 )
                 await asyncio.sleep(backoff)

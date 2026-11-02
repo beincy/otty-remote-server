@@ -41,15 +41,42 @@ body {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
   height: var(--vvh);
   padding-top: env(safe-area-inset-top, 0px);
   background: var(--bg-page);
 }
 
+.workspace-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
 .hidden {
   display: none !important;
+}
+
+.pc-tool-btn {
+  display: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pc-tool-btn.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: var(--brand);
 }
 
 /* 1. Codex 风格单行顶栏 */
@@ -464,7 +491,20 @@ body {
   opacity: 0.35;
 }
 
-/* 4. 手机端 Bottom Sheet 抽屉与任务卡片列表 */
+/* 4. 导航抽屉（H5 Bottom Sheet / PC 左侧常驻栏）与弹窗 */
+.nav-drawer {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 60;
+}
+.nav-drawer.drawer-open {
+  display: flex;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -512,6 +552,35 @@ body {
   margin: 0;
   font-size: 16px;
 }
+
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.conn-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .sheet-sub {
   font-size: 12px;
   color: var(--text-secondary);
@@ -536,6 +605,10 @@ body {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+}
+.new-task-btn:hover {
+  opacity: 0.92;
 }
 
 .task-card-list {
@@ -544,6 +617,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
 }
 
 .task-card {
@@ -551,12 +625,16 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 13px 14px;
+  padding: 12px 14px;
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--bg-page);
   text-align: left;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.task-card:hover {
+  border-color: #cbd5e1;
 }
 .task-card.active {
   background: #eff6ff;
@@ -568,7 +646,7 @@ body {
   flex: 1;
 }
 .task-card-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 3px;
@@ -585,18 +663,45 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.task-card-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .task-status-pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.task-close-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.task-close-btn:hover {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: var(--red);
 }
 
 .sheet-body {
@@ -740,4 +845,133 @@ body {
 }
 .toast.error {
   background: var(--red);
+}
+
+/* 5. PC 桌面端全屏分栏布局（Codex 风格左侧 Tabs + 右侧全屏终端） */
+@media (min-width: 768px) {
+  #app {
+    flex-direction: row;
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    padding-top: 0;
+  }
+
+  .nav-drawer {
+    position: static;
+    display: flex !important;
+    width: 300px;
+    flex-shrink: 0;
+    height: 100%;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .nav-sheet {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding-bottom: 0;
+    animation: none;
+  }
+
+  .nav-sheet .sheet-handle {
+    display: none;
+  }
+
+  .nav-sheet .sheet-header {
+    height: 60px;
+    padding: 0 16px;
+    flex-shrink: 0;
+  }
+
+  .task-card-list {
+    padding: 12px;
+  }
+
+  .task-card {
+    padding: 11px 12px;
+    border-radius: 12px;
+  }
+
+  .workspace-main {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+  }
+
+  .m-header {
+    height: 60px;
+    padding: 0 22px;
+  }
+
+  .drawer-trigger {
+    display: none;
+  }
+
+  .header-title-wrap {
+    align-items: flex-start;
+    cursor: default;
+    padding: 0;
+  }
+
+  .chevron-down {
+    display: none;
+  }
+
+  .header-title {
+    font-size: 16px;
+  }
+
+  .header-subtitle {
+    font-size: 12px;
+  }
+
+  .pc-tool-btn {
+    display: inline-flex;
+  }
+
+  .screen-viewport {
+    padding: 16px 22px 24px;
+  }
+
+  .terminal-card {
+    border-radius: 12px;
+    padding: 16px 20px;
+  }
+
+  .m-footer {
+    padding: 12px 22px 14px;
+  }
+
+  .key-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .key-pad-btn {
+    height: 34px;
+    padding: 0 14px;
+  }
+
+  .sheet-backdrop {
+    align-items: center;
+    padding: 24px;
+  }
+
+  .sheet-backdrop .bottom-sheet {
+    max-width: 480px;
+    border-radius: 18px;
+    padding-bottom: 4px;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22);
+  }
+
+  .sheet-backdrop .sheet-handle {
+    display: none;
+  }
 }

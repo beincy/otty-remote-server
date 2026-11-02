@@ -46,11 +46,14 @@ const el = {
   btnOpenDrawer: document.getElementById("btn-open-drawer"),
   headerCenter: document.getElementById("header-center"),
   connDot: document.getElementById("conn-dot"),
+  connDotSidebar: document.getElementById("conn-dot-sidebar"),
   connLabel: document.getElementById("conn-label"),
   tabCountBadge: document.getElementById("tab-count-badge"),
+  sidebarTabCount: document.getElementById("sidebar-tab-count"),
   activeStateDot: document.getElementById("active-state-dot"),
   activeTitle: document.getElementById("active-title"),
   activeSubtitle: document.getElementById("active-subtitle"),
+  btnHeaderWrap: document.getElementById("btn-header-wrap"),
   btnRefresh: document.getElementById("btn-refresh"),
   btnSettings: document.getElementById("btn-settings"),
   viewport: document.getElementById("screen-viewport"),
@@ -133,6 +136,7 @@ function showToast(message, isError = false) {
 
 function setConnectionStatus(mode, label) {
   el.connDot.className = `conn-dot ${mode}`;
+  if (el.connDotSidebar) el.connDotSidebar.className = `conn-dot ${mode}`;
   el.connLabel.textContent = label;
 }
 
@@ -195,6 +199,9 @@ function tabDisplayName(tab) {
 }
 
 function formatMobileTerminalLines(lines) {
+  if (window.innerWidth >= 768) {
+    return lines.join("\n");
+  }
   return lines
     .map((line) => line.replace(/[─━═]{28,}/g, "────────────────────────"))
     .join("\n");
@@ -206,6 +213,10 @@ function applyDisplayPrefs() {
   el.screenLines.classList.toggle("nowrap", !state.wrap);
   el.btnWrap.classList.toggle("active", state.wrap);
   el.btnWrap.textContent = state.wrap ? "自动折行：开" : "横向滚动：开";
+  if (el.btnHeaderWrap) {
+    el.btnHeaderWrap.classList.toggle("active", state.wrap);
+    el.btnHeaderWrap.textContent = state.wrap ? "自动折行" : "横向滚动";
+  }
 
   const modeLabels = {
     stream: "⚡ 流式",
@@ -324,8 +335,29 @@ async function pumpStreamQueue() {
   }
 }
 
+async function closeTabById(tab) {
+  if (!tab || tab.protected) return;
+  if (!confirm(`确定关闭会话 "${tabDisplayName(tab)}" 吗？`)) return;
+  try {
+    await apiRequest(`/tabs/${encodeURIComponent(tab.id)}`, { method: "DELETE" });
+    delete state.screens[tab.id];
+    delete inputByTab[tab.id];
+    delete syncedByTab[tab.id];
+    if (state.activeTabId === tab.id) {
+      state.activeTabId = "";
+    }
+    el.modalSettings.classList.add("hidden");
+    await fetchTabs();
+    showToast("已关闭会话");
+  } catch (err) {
+    showToast(err.message, true);
+  }
+}
+
 function renderTabs() {
-  el.tabCountBadge.textContent = String(state.tabs.length || 0);
+  const countStr = String(state.tabs.length || 0);
+  el.tabCountBadge.textContent = countStr;
+  if (el.sidebarTabCount) el.sidebarTabCount.textContent = countStr;
 
   if (state.tabs.length && !state.tabs.some((t) => t.id === state.activeTabId)) {
     const preferred = state.tabs.find((t) => t.agent && !t.protected) || state.tabs[0];
@@ -334,8 +366,9 @@ function renderTabs() {
 
   el.tabListCards.innerHTML = "";
   state.tabs.forEach((tab, idx) => {
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("div");
+    card.role = "button";
+    card.tabIndex = 0;
     card.className = `task-card${tab.id === state.activeTabId ? " active" : ""}`;
 
     const main = document.createElement("div");
@@ -352,13 +385,30 @@ function renderTabs() {
 
     main.append(title, meta);
 
+    const right = document.createElement("div");
+    right.className = "task-card-right";
+
     const statusPill = document.createElement("span");
     statusPill.className = "task-status-pill";
     statusPill.textContent = STATE_TEXT[tab.agent_state] || (tab.protected ? "宿主" : "终端");
+    right.appendChild(statusPill);
 
-    card.append(main, statusPill);
+    if (!tab.protected) {
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "task-close-btn";
+      closeBtn.title = "关闭此会话";
+      closeBtn.textContent = "✕";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeTabById(tab);
+      });
+      right.appendChild(closeBtn);
+    }
+
+    card.append(main, right);
     card.addEventListener("click", () => {
-      el.drawerTabs.classList.add("hidden");
+      el.drawerTabs.classList.remove("drawer-open");
       selectTab(tab.id);
     });
     el.tabListCards.appendChild(card);
@@ -368,14 +418,18 @@ function renderTabs() {
   if (!active) {
     el.activeStateDot.className = "state-dot";
     el.activeTitle.textContent = state.token ? "暂无会话" : "未连接";
-    el.activeSubtitle.textContent = state.token ? "点击右上角或此处新建会话" : "点击右上角 ⚙ 配置 Token";
+    el.activeSubtitle.textContent = state.token ? "点击新建会话开始工作" : "点击右上角 ⚙ 配置 Token";
     el.keypadDrawer.classList.add("hidden");
     return;
   }
 
   el.activeStateDot.className = `state-dot ${active.agent_state || ""}`;
   el.activeTitle.textContent = tabDisplayName(active);
-  const shortDir = active.cwd ? active.cwd.split("/").pop() : "";
+  const shortDir = window.innerWidth >= 768
+    ? active.cwd || ""
+    : active.cwd
+      ? active.cwd.split("/").pop()
+      : "";
   const stateLabel = STATE_TEXT[active.agent_state] || (active.protected ? "宿主保护" : "终端");
   el.activeSubtitle.textContent = [active.agent || "Shell", shortDir, stateLabel]
     .filter(Boolean)
@@ -691,8 +745,9 @@ function autoResizeInput() {
 }
 
 function openDrawerTabs() {
+  if (window.innerWidth >= 768) return;
   renderTabs();
-  el.drawerTabs.classList.remove("hidden");
+  el.drawerTabs.classList.add("drawer-open");
 }
 
 function openSettingsModal() {
@@ -703,7 +758,7 @@ function openSettingsModal() {
 }
 
 function openNewTabModal() {
-  el.drawerTabs.classList.add("hidden");
+  el.drawerTabs.classList.remove("drawer-open");
   const active = currentTab();
   if (!el.inputCwd.value && (active?.cwd || state.recentCwds[0])) {
     el.inputCwd.value = active?.cwd || state.recentCwds[0] || "";
@@ -729,7 +784,11 @@ el.btnSettings.addEventListener("click", openSettingsModal);
 el.btnEmptySetup.addEventListener("click", openSettingsModal);
 el.btnNewTab.addEventListener("click", openNewTabModal);
 
-[el.drawerTabs, el.modalNewTab, el.modalSettings].forEach((backdrop) => {
+el.drawerTabs.addEventListener("click", (e) => {
+  if (e.target === el.drawerTabs) el.drawerTabs.classList.remove("drawer-open");
+});
+
+[el.modalNewTab, el.modalSettings].forEach((backdrop) => {
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) backdrop.classList.add("hidden");
   });
@@ -799,11 +858,16 @@ el.btnCreateTab.addEventListener("click", async () => {
   }
 });
 
-el.btnWrap.addEventListener("click", () => {
+function toggleWrap() {
   state.wrap = !state.wrap;
   applyDisplayPrefs();
   saveState();
-});
+}
+
+el.btnWrap.addEventListener("click", toggleWrap);
+if (el.btnHeaderWrap) {
+  el.btnHeaderWrap.addEventListener("click", toggleWrap);
+}
 
 el.btnRefresh.addEventListener("click", () => {
   stickToBottom = true;
@@ -811,22 +875,8 @@ el.btnRefresh.addEventListener("click", () => {
   showToast("已刷新");
 });
 
-el.btnCloseTab.addEventListener("click", async () => {
-  const active = currentTab();
-  if (!active || active.protected) return;
-  if (!confirm(`确定关闭会话 "${tabDisplayName(active)}" 吗？`)) return;
-  try {
-    await apiRequest(`/tabs/${encodeURIComponent(active.id)}`, { method: "DELETE" });
-    delete state.screens[active.id];
-    delete inputByTab[active.id];
-    delete syncedByTab[active.id];
-    state.activeTabId = "";
-    el.modalSettings.classList.add("hidden");
-    await fetchTabs();
-    showToast("已关闭会话");
-  } catch (err) {
-    showToast(err.message, true);
-  }
+el.btnCloseTab.addEventListener("click", () => {
+  closeTabById(currentTab());
 });
 
 el.btnLoadMore.addEventListener("click", loadMoreHistory);
@@ -898,6 +948,19 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.token) {
     if (!ws || ws.readyState !== WebSocket.OPEN) connectWebSocket();
     fetchTabs();
+  }
+});
+
+let lastIsDesktop = window.innerWidth >= 768;
+window.addEventListener("resize", () => {
+  const isDesktop = window.innerWidth >= 768;
+  if (isDesktop !== lastIsDesktop) {
+    lastIsDesktop = isDesktop;
+    if (isDesktop) {
+      el.drawerTabs.classList.remove("drawer-open");
+    }
+    renderTabs();
+    renderScreen();
   }
 });
 
