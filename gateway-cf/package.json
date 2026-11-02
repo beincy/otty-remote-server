@@ -1,0 +1,11 @@
+{
+  "name": "otty-gateway-cf",
+  "private": true,
+  "version": "0.3.0",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,24 @@
+name = "otty-gateway"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# 直接复用 gateway/pwa 前端静态文件（Cloudflare 免费托管静态资源）
+[assets]
+directory = "../gateway/pwa"
+binding = "ASSETS"
+
+# 绑定 Durable Object（全局唯一实例中转中心）
+[[durable_objects.bindings]]
+name = "OTTY_HUB"
+class_name = "OttyInstanceHub"
+
+# Cloudflare 免费版（Free Plan）必须使用 new_sqlite_classes
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OttyInstanceHub"]
+
+[vars]
+# 注册密钥（至少 16 位），本地运行 main.py 时需设置相同的 OTTY_GATEWAY_REGISTER_KEY
+OTTY_GATEWAY_REGISTER_KEY = "otty-local-gateway-reg-key-2026"
+# 可选：跨域白名单（逗号分隔，留空允许同源或任意 Origin）
+OTTY_GATEWAY_CORS_ORIGINS = ""
