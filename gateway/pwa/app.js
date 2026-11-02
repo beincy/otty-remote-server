@@ -33,6 +33,7 @@ let wsReconnectTimer = null;
 let pollTimer = null;
 let toastTimer = null;
 let stickToBottom = true;
+let loadingHistory = false;
 
 // In-memory per-tab input & synced state so page reloads never re-send stale text
 const inputByTab = {};
@@ -492,6 +493,9 @@ function renderScreen() {
     ? formatMobileTerminalLines(lines)
     : "（正在读取终端画面...）";
   el.historyBar.classList.toggle("hidden", !entry?.hasMore);
+  if (el.btnLoadMore) {
+    el.btnLoadMore.textContent = loadingHistory ? "⏳ 正在加载更早记录..." : "↑ 上滑自动加载更早记录";
+  }
   if (stickToBottom) {
     scrollToBottom();
   }
@@ -542,7 +546,7 @@ async function fetchLatestScreen(tabId = state.activeTabId) {
   if (!state.token || !tabId) return;
   try {
     const page = await apiRequest(`/tabs/${encodeURIComponent(tabId)}/screen`, {
-      params: { limit: 60 },
+      params: { limit: 120 },
     });
     applyScreenPage(tabId, page);
   } catch (err) {
@@ -551,15 +555,20 @@ async function fetchLatestScreen(tabId = state.activeTabId) {
 }
 
 async function loadMoreHistory() {
+  if (loadingHistory) return;
   const active = currentTab();
   if (!active) return;
   const entry = state.screens[active.id];
-  if (!entry?.nextBefore) return;
+  if (!entry?.hasMore || !entry?.nextBefore) return;
+  loadingHistory = true;
+  if (el.btnLoadMore) {
+    el.btnLoadMore.textContent = "⏳ 正在加载更早记录...";
+  }
   const prevHeight = el.viewport.scrollHeight;
   const prevTop = el.viewport.scrollTop;
   try {
     const page = await apiRequest(`/tabs/${encodeURIComponent(active.id)}/screen`, {
-      params: { limit: 60, before: entry.nextBefore },
+      params: { limit: 120, before: entry.nextBefore },
     });
     entry.lines = [...(page.lines || []), ...entry.lines];
     entry.nextBefore = page.nextBefore || null;
@@ -567,11 +576,17 @@ async function loadMoreHistory() {
     stickToBottom = false;
     renderScreen();
     requestAnimationFrame(() => {
-      el.viewport.scrollTop = el.viewport.scrollHeight - prevHeight + prevTop;
+      const addedHeight = el.viewport.scrollHeight - prevHeight;
+      el.viewport.scrollTop = Math.max(addedHeight + prevTop, 10);
     });
   } catch (err) {
     showToast(err.message, true);
     await fetchLatestScreen(active.id);
+  } finally {
+    loadingHistory = false;
+    if (el.btnLoadMore) {
+      el.btnLoadMore.textContent = "↑ 上滑自动加载更早记录";
+    }
   }
 }
 
@@ -725,7 +740,7 @@ function connectWebSocket() {
 function startBackgroundLoop() {
   clearInterval(pollTimer);
   pollTimer = setInterval(() => {
-    if (document.hidden || !state.token || streamInFlight) return;
+    if (document.hidden || !state.token || streamInFlight || loadingHistory || !stickToBottom) return;
     const active = currentTab();
     if (!active) return;
     if (
@@ -882,11 +897,32 @@ el.btnCloseTab.addEventListener("click", () => {
 el.btnLoadMore.addEventListener("click", loadMoreHistory);
 
 el.viewport.addEventListener("scroll", () => {
+  const wasStuck = stickToBottom;
   stickToBottom = isNearBottom();
   el.btnScrollBottom.classList.toggle("hidden", stickToBottom);
+  if (stickToBottom && !wasStuck && state.activeTabId) {
+    fetchLatestScreen(state.activeTabId);
+    return;
+  }
+  if (el.viewport.scrollTop <= 80 && !stickToBottom) {
+    loadMoreHistory();
+  }
 });
 
-el.btnScrollBottom.addEventListener("click", scrollToBottom);
+el.viewport.addEventListener(
+  "wheel",
+  (e) => {
+    if (e.deltaY < 0 && el.viewport.scrollTop <= 80) {
+      loadMoreHistory();
+    }
+  },
+  { passive: true }
+);
+
+el.btnScrollBottom.addEventListener("click", () => {
+  scrollToBottom();
+  if (state.activeTabId) fetchLatestScreen(state.activeTabId);
+});
 
 el.keyBar.querySelectorAll("[data-key]").forEach((btn) => {
   btn.addEventListener("click", () => sendKey(btn.dataset.key));
