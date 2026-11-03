@@ -418,6 +418,111 @@ body {
   border-color: #93c5fd;
 }
 
+.voice-toggle-btn {
+  color: var(--text-primary);
+}
+.voice-toggle-btn.active {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #15803d;
+}
+.voice-toggle-btn:disabled,
+.hold-talk-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 按住说话大按钮（替换输入胶囊） */
+.hold-talk-btn {
+  flex: 1;
+  height: 42px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+.hold-talk-btn.recording {
+  background: #dcfce7;
+  border-color: #4ade80;
+  color: #15803d;
+}
+.hold-talk-btn.cancel {
+  background: #fee2e2;
+  border-color: #f87171;
+  color: var(--red);
+}
+.hold-talk-btn.busy {
+  color: var(--text-secondary);
+}
+
+/* 录音浮层 */
+.voice-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 80;
+}
+.voice-card {
+  width: 168px;
+  padding: 22px 16px 16px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.35);
+}
+.voice-overlay.cancel .voice-card {
+  background: rgba(220, 38, 38, 0.88);
+}
+.voice-wave {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+  height: 36px;
+  margin-bottom: 10px;
+}
+.voice-wave span {
+  width: 5px;
+  height: 8px;
+  border-radius: 3px;
+  background: #4ade80;
+  animation: voiceWave 0.9s infinite ease-in-out;
+}
+.voice-overlay.cancel .voice-wave span {
+  background: #fff;
+  animation-play-state: paused;
+}
+.voice-wave span:nth-child(2) { animation-delay: 0.12s; }
+.voice-wave span:nth-child(3) { animation-delay: 0.24s; }
+.voice-wave span:nth-child(4) { animation-delay: 0.36s; }
+.voice-wave span:nth-child(5) { animation-delay: 0.48s; }
+@keyframes voiceWave {
+  0%, 100% { height: 8px; }
+  50% { height: 32px; }
+}
+.voice-timer {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 6px;
+}
+.voice-hint {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
 .composer-pill {
   flex: 1;
   display: flex;

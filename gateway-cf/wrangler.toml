@@ -22,3 +22,10 @@ new_sqlite_classes = ["OttyInstanceHub"]
 OTTY_GATEWAY_REGISTER_KEY = "otty-local-gateway-reg-key-2026"
 # 可选：跨域白名单（逗号分隔，留空允许同源或任意 Origin）
 OTTY_GATEWAY_CORS_ORIGINS = ""
+# 语音输入（按住说话）使用的阿里云百炼 ASR 模型与专属请求地址
+OTTY_ASR_MODEL = "qwen-audio-3.1-asr-flash"
+OTTY_ASR_ENDPOINT = "https://llm-6b7p48qstpbrqpqn.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+
+# 语音输入密钥请勿写在这里！在 Cloudflare 后台 Settings → Variables and Secrets
+# 添加 Secret：DASHSCOPE_API_KEY，或执行：npx wrangler secret put DASHSCOPE_API_KEY
+# 未配置 DASHSCOPE_API_KEY 时，/api/v1/asr 会转发给本地 Otty Server，由本地 .env 中的密钥识别。

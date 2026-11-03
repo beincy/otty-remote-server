@@ -12,7 +12,7 @@
   <link rel="manifest" href="/otty/manifest.json" />
   <link rel="icon" type="image/svg+xml" href="/otty/icon.svg" />
   <link rel="apple-touch-icon" href="/otty/icon.svg" />
-  <link rel="stylesheet" href="/otty/styles.css?v=7" />
+  <link rel="stylesheet" href="/otty/styles.css?v=9" />
 </head>
 <body>
   <div id="app">
@@ -129,7 +129,23 @@
           <button id="btn-toggle-keys" class="keypad-toggle-btn" title="展开/收起快捷按键">
             ⌨️
           </button>
-          <div class="composer-pill">
+          <button id="btn-voice-mode" class="keypad-toggle-btn voice-toggle-btn" title="切换语音输入（按住说话）" aria-label="语音输入">
+            <svg id="icon-mic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+              <path d="M5 10a7 7 0 0 0 14 0"></path>
+              <line x1="12" y1="17" x2="12" y2="22"></line>
+            </svg>
+            <svg id="icon-keyboard" class="hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+              <line x1="6" y1="9" x2="6" y2="9"></line>
+              <line x1="10" y1="9" x2="10" y2="9"></line>
+              <line x1="14" y1="9" x2="14" y2="9"></line>
+              <line x1="18" y1="9" x2="18" y2="9"></line>
+              <line x1="7" y1="15" x2="17" y2="15"></line>
+            </svg>
+          </button>
+          <button id="btn-hold-talk" class="hold-talk-btn hidden" type="button">按住 说话</button>
+          <div id="composer-pill" class="composer-pill">
             <textarea
               id="msg-input"
               class="msg-input"
@@ -154,6 +170,17 @@
 
     <!-- 轻提示 Toast -->
     <div id="toast" class="toast hidden"></div>
+
+    <!-- 语音录制浮层（类似微信：按住说话，上滑取消） -->
+    <div id="voice-overlay" class="voice-overlay hidden" aria-live="polite">
+      <div class="voice-card">
+        <div class="voice-wave">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div id="voice-timer" class="voice-timer">0:00</div>
+        <div id="voice-hint" class="voice-hint">松开 识别，上滑 取消</div>
+      </div>
+    </div>
 
     <!-- 抽屉 2：新建会话 Bottom Sheet -->
     <div id="modal-new-tab" class="sheet-backdrop hidden">
@@ -227,6 +254,6 @@
     </div>
   </div>
 
-  <script type="module" src="/otty/app.js?v=8"></script>
+  <script type="module" src="/otty/app.js?v=9"></script>
 </body>
 </html>

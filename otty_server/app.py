@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
+from gateway.asr import AsrRequest, AsrResult, AsrSettings, transcribe
 from gateway.pwa import mount_pwa
 
 from .cli import EXIT_TIMEOUT, OttyCLI, OttyError
@@ -218,9 +219,14 @@ class WaitResult(BaseModel):
 TabId = Annotated[str, APIPath(pattern=r"^t_[A-Za-z0-9_-]+$")]
 
 
-def create_app(settings: Settings | None = None, cli: OttyCLI | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    cli: OttyCLI | None = None,
+    asr_settings: AsrSettings | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     cli = cli or OttyCLI()
+    asr_settings = asr_settings or AsrSettings.from_env()
     screens = Screens(cli)
     # tab_id -> command, for tabs this server launched whose agent hooks have not
     # reported yet. Pruned when the agent registers or the tab disappears.
@@ -491,6 +497,11 @@ def create_app(settings: Settings | None = None, cli: OttyCLI | None = None) -> 
             done = False
         tab = await get_tab(tab_id)
         return WaitResult(done=done and tab.agent_state != "awaiting", tab=tab)
+
+    @api.post("/api/v1/asr", response_model=AsrResult, tags=["Voice"])
+    async def speech_to_text(body: AsrRequest):
+        """Hold-to-talk voice input: transcribe a short recording to text."""
+        return await transcribe(asr_settings, body)
 
     app.include_router(api)
     return app

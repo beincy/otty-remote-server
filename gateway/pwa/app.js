@@ -43,6 +43,12 @@ let streamTimer = null;
 let streamInFlight = false;
 let pendingFlushSubmit = false;
 
+// 语音输入：识别结果作为“草稿”填入输入框，草稿存在期间暂停流式同步（与流式输入互斥），
+// 用户修改后点发送才一次性写入终端。
+const voiceDraftByTab = {};
+let voiceMode = false;
+let voiceTranscribing = false;
+
 const el = {
   btnOpenDrawer: document.getElementById("btn-open-drawer"),
   headerCenter: document.getElementById("header-center"),
@@ -70,6 +76,14 @@ const el = {
   awaitingBanner: document.getElementById("awaiting-banner"),
   keyBar: document.getElementById("key-bar"),
   btnToggleKeys: document.getElementById("btn-toggle-keys"),
+  btnVoiceMode: document.getElementById("btn-voice-mode"),
+  btnHoldTalk: document.getElementById("btn-hold-talk"),
+  composerPill: document.getElementById("composer-pill"),
+  iconMic: document.getElementById("icon-mic"),
+  iconKeyboard: document.getElementById("icon-keyboard"),
+  voiceOverlay: document.getElementById("voice-overlay"),
+  voiceTimer: document.getElementById("voice-timer"),
+  voiceHint: document.getElementById("voice-hint"),
   btnDelivery: document.getElementById("btn-delivery"),
   msgInput: document.getElementById("msg-input"),
   btnSend: document.getElementById("btn-send"),
@@ -270,6 +284,7 @@ function scheduleStreamSync(immediate = false) {
   clearTimeout(streamTimer);
   const active = currentTab();
   if (!shouldStreamTab(active)) return;
+  if (voiceDraftByTab[active.id]) return;
   if (isComposing && !immediate) return;
   streamTimer = setTimeout(
     () => {
@@ -293,6 +308,11 @@ async function pumpStreamQueue() {
       const { backspaces, text } = computeStreamDiff(currentSynced, target);
       const shouldSubmit = pendingFlushSubmit && tabId === state.activeTabId;
 
+      // 语音草稿未发送前不做实时同步
+      if (voiceDraftByTab[tabId] && !shouldSubmit) {
+        break;
+      }
+
       if (backspaces === 0 && !text && !shouldSubmit) {
         break;
       }
@@ -313,6 +333,7 @@ async function pumpStreamQueue() {
       if (shouldSubmit) {
         syncedByTab[tabId] = "";
         inputByTab[tabId] = "";
+        delete voiceDraftByTab[tabId];
         if (tabId === state.activeTabId) {
           el.msgInput.value = "";
           autoResizeInput();
@@ -445,6 +466,8 @@ function renderTabs() {
   const canInput = active.writable && !isAwaiting;
   el.msgInput.disabled = !canInput;
   el.btnSend.disabled = !canInput;
+  el.btnVoiceMode.disabled = !canInput && !voiceMode;
+  el.btnHoldTalk.disabled = !canInput || voiceTranscribing;
   if (active.protected) {
     el.msgInput.placeholder = "服务宿主 Tab 受保护";
   } else if (!active.writable) {
@@ -614,6 +637,7 @@ async function sendMessage() {
     el.msgInput.value = "";
     inputByTab[active.id] = "";
     syncedByTab[active.id] = "";
+    delete voiceDraftByTab[active.id];
     autoResizeInput();
     stickToBottom = true;
     saveState();
@@ -644,6 +668,7 @@ async function sendKey(keyName) {
     if (["Enter", "Ctrl+C"].includes(keyName)) {
       syncedByTab[active.id] = "";
       inputByTab[active.id] = "";
+      delete voiceDraftByTab[active.id];
       el.msgInput.value = "";
       autoResizeInput();
     } else if (keyName === "Backspace") {
@@ -959,6 +984,8 @@ el.msgInput.addEventListener("input", () => {
   autoResizeInput();
   if (state.activeTabId) {
     inputByTab[state.activeTabId] = el.msgInput.value;
+    // 清空语音草稿后恢复实时流式同步
+    if (!el.msgInput.value) delete voiceDraftByTab[state.activeTabId];
   }
   scheduleStreamSync(false);
 });
@@ -979,6 +1006,321 @@ el.msgInput.addEventListener("keydown", (e) => {
 });
 
 el.btnSend.addEventListener("click", sendMessage);
+
+// ---------------------------------------------------------------------------
+// 语音输入：按住说话 → 松开识别 → 结果填入输入框（可修改后发送），上滑取消
+// 录音在浏览器内编码为 16kHz 单声道 WAV，经鉴权的 /api/v1/asr 接口识别
+// ---------------------------------------------------------------------------
+const VOICE_SAMPLE_RATE = 16000;
+const VOICE_MAX_MS = 60000;
+const VOICE_MIN_MS = 600;
+const VOICE_CANCEL_DISTANCE = 60;
+
+let voiceRec = null;
+let voicePress = null;
+
+function setVoiceMode(on) {
+  voiceMode = on;
+  el.btnVoiceMode.classList.toggle("active", on);
+  el.iconMic.classList.toggle("hidden", on);
+  el.iconKeyboard.classList.toggle("hidden", !on);
+  el.btnHoldTalk.classList.toggle("hidden", !on);
+  el.composerPill.classList.toggle("hidden", on);
+  el.btnVoiceMode.title = on ? "切换回键盘输入" : "切换语音输入（按住说话）";
+  if (!on && window.innerWidth >= 768) el.msgInput.focus();
+}
+
+function updateVoiceUi(phase) {
+  const btn = el.btnHoldTalk;
+  btn.classList.remove("recording", "cancel", "busy");
+  el.voiceOverlay.classList.remove("cancel");
+  if (phase === "recording") {
+    btn.classList.add("recording");
+    btn.textContent = "松开 识别";
+    el.voiceHint.textContent = "松开 识别，上滑 取消";
+    el.voiceOverlay.classList.remove("hidden");
+  } else if (phase === "cancel") {
+    btn.classList.add("cancel");
+    btn.textContent = "松开 取消";
+    el.voiceHint.textContent = "松开手指，取消发送";
+    el.voiceOverlay.classList.add("cancel");
+    el.voiceOverlay.classList.remove("hidden");
+  } else if (phase === "busy") {
+    btn.classList.add("busy");
+    btn.textContent = "识别中...";
+    el.voiceOverlay.classList.add("hidden");
+  } else {
+    btn.textContent = "按住 说话";
+    el.voiceOverlay.classList.add("hidden");
+  }
+}
+
+function formatVoiceTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+async function startVoiceRecording() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast("当前环境不支持录音（需 HTTPS 访问）", true);
+    return null;
+  }
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) {
+    showToast("当前浏览器不支持录音", true);
+    return null;
+  }
+  // 在用户手势内创建并 resume，兼容 iOS Safari
+  const ctx = new AudioCtx();
+  ctx.resume().catch(() => {});
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch {
+    ctx.close().catch(() => {});
+    showToast("无法使用麦克风，请在浏览器中允许录音权限", true);
+    return null;
+  }
+  const source = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  const rec = {
+    ctx,
+    stream,
+    source,
+    processor,
+    chunks: [],
+    inputRate: ctx.sampleRate,
+    startedAt: Date.now(),
+    timer: null,
+  };
+  processor.onaudioprocess = (e) => {
+    rec.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  source.connect(processor);
+  processor.connect(ctx.destination);
+  return rec;
+}
+
+function stopVoiceRecording(rec) {
+  clearInterval(rec.timer);
+  try {
+    rec.processor.disconnect();
+    rec.source.disconnect();
+  } catch {
+    // Ignore
+  }
+  rec.stream.getTracks().forEach((t) => t.stop());
+  rec.ctx.close().catch(() => {});
+}
+
+function downsampleBuffer(chunks, inputRate, outputRate) {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.length;
+  }
+  if (inputRate === outputRate) return merged;
+  const ratio = inputRate / outputRate;
+  const outLen = Math.floor(total / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(Math.floor((i + 1) * ratio), total);
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += merged[j];
+    out[i] = end > start ? sum / (end - start) : merged[start] || 0;
+  }
+  return out;
+}
+
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (pos, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(pos + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  let pos = 44;
+  for (let i = 0; i < samples.length; i++, pos += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Uint8Array(buffer);
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+function applyVoiceResult(tabId, text) {
+  const base = tabId === state.activeTabId ? el.msgInput.value : inputByTab[tabId] || "";
+  const joiner = base && !/\s$/.test(base) ? " " : "";
+  const next = base + joiner + text;
+  voiceDraftByTab[tabId] = true;
+  inputByTab[tabId] = next;
+  if (tabId === state.activeTabId) {
+    el.msgInput.value = next;
+    setVoiceMode(false);
+    autoResizeInput();
+  }
+}
+
+async function finishVoice(cancelled) {
+  const press = voicePress;
+  voicePress = null;
+  const rec = voiceRec;
+  voiceRec = null;
+  if (!rec) {
+    updateVoiceUi("idle");
+    return;
+  }
+  stopVoiceRecording(rec);
+  const duration = Date.now() - rec.startedAt;
+  if (cancelled) {
+    updateVoiceUi("idle");
+    showToast("已取消语音输入");
+    return;
+  }
+  if (duration < VOICE_MIN_MS) {
+    updateVoiceUi("idle");
+    showToast("说话时间太短", true);
+    return;
+  }
+
+  const tabId = press?.tabId || state.activeTabId;
+  voiceTranscribing = true;
+  el.btnHoldTalk.disabled = true;
+  updateVoiceUi("busy");
+  try {
+    const samples = downsampleBuffer(rec.chunks, rec.inputRate, VOICE_SAMPLE_RATE);
+    const wav = encodeWav(samples, VOICE_SAMPLE_RATE);
+    const result = await apiRequest("/asr", {
+      method: "POST",
+      body: { audio: bytesToBase64(wav), format: "wav", sample_rate: VOICE_SAMPLE_RATE },
+    });
+    const text = (result?.text || "").trim();
+    if (!text) {
+      showToast("没有识别到内容，请再说一次", true);
+    } else {
+      applyVoiceResult(tabId, text);
+      showToast("识别完成，可修改后发送");
+    }
+  } catch (err) {
+    showToast(`语音识别失败：${err.message}`, true);
+  } finally {
+    voiceTranscribing = false;
+    updateVoiceUi("idle");
+    renderTabs();
+  }
+}
+
+el.btnVoiceMode.addEventListener("click", () => {
+  if (voiceRec || voiceTranscribing) return;
+  setVoiceMode(!voiceMode);
+});
+
+el.btnHoldTalk.addEventListener("contextmenu", (e) => e.preventDefault());
+
+el.btnHoldTalk.addEventListener("pointerdown", async (e) => {
+  if (e.button !== undefined && e.button !== 0) return;
+  e.preventDefault();
+  const active = currentTab();
+  if (!active || !active.writable || active.agent_state === "awaiting") {
+    showToast("当前会话不可输入", true);
+    return;
+  }
+  if (voiceRec || voicePress || voiceTranscribing) return;
+  try {
+    el.btnHoldTalk.setPointerCapture(e.pointerId);
+  } catch {
+    // Ignore
+  }
+  // 停掉进行中的流式同步，语音与流式输入互斥
+  clearTimeout(streamTimer);
+  const press = { startY: e.clientY, cancel: false, released: false, tabId: active.id };
+  voicePress = press;
+  updateVoiceUi("recording");
+  el.voiceTimer.textContent = "0:00";
+  if (navigator.vibrate) navigator.vibrate(15);
+
+  const rec = await startVoiceRecording();
+  if (!rec) {
+    voicePress = null;
+    updateVoiceUi("idle");
+    return;
+  }
+  if (press.released || voicePress !== press) {
+    // 首次授权弹窗期间已松手
+    stopVoiceRecording(rec);
+    updateVoiceUi("idle");
+    showToast("麦克风已就绪，请重新按住说话");
+    return;
+  }
+  voiceRec = rec;
+  rec.timer = setInterval(() => {
+    const elapsed = Date.now() - rec.startedAt;
+    el.voiceTimer.textContent = formatVoiceTime(elapsed);
+    if (elapsed >= VOICE_MAX_MS) {
+      showToast("已达到 60 秒上限，自动识别");
+      finishVoice(false);
+    }
+  }, 200);
+});
+
+el.btnHoldTalk.addEventListener("pointermove", (e) => {
+  const press = voicePress;
+  if (!press) return;
+  const shouldCancel = press.startY - e.clientY > VOICE_CANCEL_DISTANCE;
+  if (shouldCancel !== press.cancel) {
+    press.cancel = shouldCancel;
+    updateVoiceUi(shouldCancel ? "cancel" : "recording");
+  }
+});
+
+el.btnHoldTalk.addEventListener("pointerup", () => {
+  const press = voicePress;
+  if (!press) return;
+  press.released = true;
+  if (!voiceRec) {
+    voicePress = null;
+    updateVoiceUi("idle");
+    return;
+  }
+  finishVoice(press.cancel);
+});
+
+el.btnHoldTalk.addEventListener("pointercancel", () => {
+  const press = voicePress;
+  if (!press) return;
+  press.released = true;
+  if (!voiceRec) {
+    voicePress = null;
+    updateVoiceUi("idle");
+    return;
+  }
+  finishVoice(true);
+});
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.token) {

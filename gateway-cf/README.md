@@ -32,3 +32,15 @@ OTTY_GATEWAY_REGISTER_KEY="otty-local-gateway-reg-key-2026" \
 ```
 
 启动后直接用手机打开终端里打印出的 `PWA Client` 链接即可使用。
+
+## 语音输入（按住说话）
+
+PWA 输入栏左侧的 🎤 按钮切换为「按住 说话」，松手后录音会上传到 `POST /api/v1/asr`（需 Bearer Token，且 Token 对应的本地实例必须在线），调用阿里云百炼 `qwen-audio-3.1-asr-flash` 识别，结果填入输入框，修改后再发送。
+
+| 变量 | 说明 |
+| --- | --- |
+| `DASHSCOPE_API_KEY` | **Secret**，阿里云百炼 API Key（后台 Settings → Variables and Secrets 添加，或 `npx wrangler secret put DASHSCOPE_API_KEY`） |
+| `OTTY_ASR_MODEL` | 可选，默认 `qwen-audio-3.1-asr-flash` |
+| `OTTY_ASR_ENDPOINT` | 可选，默认 `https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`，也可填 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/...` |
+
+Worker 未配置 `DASHSCOPE_API_KEY` 时，请求会转发给本地 Otty Server，由本地 `.env` 中的同名变量完成识别。

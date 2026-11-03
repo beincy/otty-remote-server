@@ -262,6 +262,8 @@ class TunnelClient:
                     additional_headers=self.headers(),
                     ping_interval=20,
                     ping_timeout=20,
+                    # Voice-input recordings are forwarded as base64 JSON frames.
+                    max_size=16 * 1024 * 1024,
                 ) as ws:
                     logger.info(
                         "Connected to gateway %s as instance %s",

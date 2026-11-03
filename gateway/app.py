@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.routing import Mount
 
+from .asr import AsrRequest, AsrSettings, transcribe
 from .pwa import mount_pwa
 
 MIN_SECRET_LENGTH = 16
@@ -187,7 +188,7 @@ class GatewayHub:
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         session.pending[req_id] = fut
         # Wait endpoint can block up to 60s; give it headroom.
-        timeout = 75.0 if path.endswith("/wait") else 20.0
+        timeout = 75.0 if path.endswith(("/wait", "/asr")) else 20.0
         try:
             await session.websocket.send_json(
                 {
@@ -235,8 +236,11 @@ def get_token(
     return credentials.credentials
 
 
-def create_gateway_app(settings: GatewaySettings | None = None) -> FastAPI:
+def create_gateway_app(
+    settings: GatewaySettings | None = None, asr_settings: AsrSettings | None = None
+) -> FastAPI:
     settings = settings or GatewaySettings.from_env()
+    asr_settings = asr_settings or AsrSettings.from_env()
     hub = GatewayHub()
 
     app = FastAPI(
@@ -431,6 +435,39 @@ def create_gateway_app(settings: GatewaySettings | None = None) -> FastAPI:
             body,
         )
         return JSONResponse(status_code=status, content=payload)
+
+    async def handle_asr(request: Request, token: str, instance_id: str | None):
+        # Auth first: the bearer token must belong to an online instance.
+        session = hub.resolve(token, instance_id)
+        try:
+            body = AsrRequest.model_validate(await request.json())
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid ASR request: {exc}") from exc
+        if asr_settings.enabled:
+            result = await transcribe(asr_settings, body)
+            return JSONResponse(content=result.model_dump())
+        # No key on the gateway: let the local server transcribe with its own key.
+        status, payload = await hub.forward(
+            session, "POST", "/api/v1/asr", "", body.model_dump()
+        )
+        return JSONResponse(status_code=status, content=payload)
+
+    @app.post("/api/v1/asr", tags=["Voice"])
+    async def asr_by_token(
+        request: Request,
+        token: Annotated[str, Depends(get_token)],
+        x_instance_id: Annotated[str | None, Header()] = None,
+    ):
+        """Hold-to-talk voice input: transcribe a short recording to text."""
+        return await handle_asr(request, token, x_instance_id)
+
+    @app.post("/i/{instance_id}/api/v1/asr", tags=["Voice"])
+    async def asr_by_instance(
+        request: Request,
+        instance_id: str,
+        token: Annotated[str, Depends(get_token)],
+    ):
+        return await handle_asr(request, token, instance_id)
 
     @app.api_route(
         "/api/v1/{api_path:path}",

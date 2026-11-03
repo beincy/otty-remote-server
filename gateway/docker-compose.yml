@@ -14,6 +14,10 @@ services:
       OTTY_GATEWAY_REGISTER_KEY: "${OTTY_GATEWAY_REGISTER_KEY:-otty-local-gateway-reg-key-2026}"
       # 可选：自定义跨域白名单（逗号分隔）
       OTTY_GATEWAY_CORS_ORIGINS: "${OTTY_GATEWAY_CORS_ORIGINS:-}"
+      # 语音输入（按住说话）：阿里云百炼 API Key，留空则转发给本地 Otty Server 识别
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      OTTY_ASR_MODEL: "${OTTY_ASR_MODEL:-qwen-audio-3.1-asr-flash}"
+      OTTY_ASR_ENDPOINT: "${OTTY_ASR_ENDPOINT:-https://llm-6b7p48qstpbrqpqn.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation}"
     healthcheck:
       test:
         [

@@ -88,6 +88,102 @@ function normalizePath(pathname) {
   return path || "/";
 }
 
+// ---------------------------------------------------------------------------
+// 语音输入（按住说话）：调用阿里云百炼 Qwen-Audio-ASR 同步识别
+// 密钥通过 Worker 环境变量 / Secret 配置：DASHSCOPE_API_KEY
+// 可选：OTTY_ASR_MODEL（默认 qwen-audio-3.1-asr-flash）、OTTY_ASR_ENDPOINT
+// ---------------------------------------------------------------------------
+const DEFAULT_ASR_MODEL = "qwen-audio-3.1-asr-flash";
+const DEFAULT_ASR_ENDPOINT =
+  "https://llm-6b7p48qstpbrqpqn.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+const AUDIO_MIME = {
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
+  webm: "audio/webm",
+};
+
+function validateAsrBody(body) {
+  if (!body || typeof body !== "object") return "Request body must be a JSON object";
+  let audio = typeof body.audio === "string" ? body.audio : "";
+  if (audio.startsWith("data:")) audio = audio.split(",", 2)[1] || "";
+  if (audio.length < 16) return "audio is required (base64)";
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(audio)) return "audio must be valid base64";
+  if ((audio.length * 3) / 4 > MAX_AUDIO_BYTES) return "audio is too large";
+  const format = body.format || "wav";
+  if (!AUDIO_MIME[format]) return `Unsupported audio format '${format}'`;
+  const sampleRate = Number(body.sample_rate || 16000);
+  if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 48000) {
+    return "sample_rate must be an integer between 8000 and 48000";
+  }
+  body.audio = audio;
+  body.format = format;
+  body.sample_rate = sampleRate;
+  return null;
+}
+
+function extractAsrText(payload) {
+  const output = payload && typeof payload === "object" ? payload.output || {} : {};
+  if (typeof output.text === "string") return output.text;
+  if (output.sentence && typeof output.sentence.text === "string") return output.sentence.text;
+  const content = output.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((p) => p?.text || "").join("");
+  return "";
+}
+
+async function transcribeWithDashScope(env, body) {
+  const model = (env.OTTY_ASR_MODEL || DEFAULT_ASR_MODEL).trim();
+  const endpoint = (env.OTTY_ASR_ENDPOINT || DEFAULT_ASR_ENDPOINT).trim();
+  const mime = AUDIO_MIME[body.format] || "audio/wav";
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.DASHSCOPE_API_KEY.trim()}`,
+        "Content-Type": "application/json",
+        "X-DashScope-SSE": "disable",
+      },
+      body: JSON.stringify({
+        model,
+        input: {
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_audio",
+                  input_audio: { data: `data:${mime};base64,${body.audio}` },
+                },
+              ],
+            },
+          ],
+        },
+        parameters: { format: body.format, sample_rate: String(body.sample_rate) },
+      }),
+    });
+  } catch (err) {
+    return { status: 502, body: { detail: `ASR service unreachable: ${err}` } };
+  }
+  let payload = {};
+  try {
+    payload = await res.json();
+  } catch {
+    payload = {};
+  }
+  if (!res.ok) {
+    return {
+      status: 502,
+      body: { detail: `ASR failed (${res.status}): ${payload?.message || "unknown error"}` },
+    };
+  }
+  return { status: 200, body: { text: extractAsrText(payload).trim(), model } };
+}
+
 export class OttyInstanceHub {
   constructor(ctx, env) {
     this.ctx = ctx;
@@ -127,7 +223,7 @@ export class OttyInstanceHub {
       });
     }
     const reqId = crypto.randomUUID().replace(/-/g, "");
-    const timeoutMs = path.endsWith("/wait") ? 75000 : 20000;
+    const timeoutMs = path.endsWith("/wait") || path.endsWith("/asr") ? 75000 : 20000;
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -407,6 +503,23 @@ export class OttyInstanceHub {
       }
 
       const apiPath = request.headers.get("X-Otty-Api-Path") || "/api/v1/tabs";
+
+      // 语音识别：Token 已通过上方在线实例校验，Gateway 配置了密钥则直接识别，
+      // 否则转发给本地 Otty Server（使用本地环境变量里的密钥）。
+      if (apiPath === "/api/v1/asr") {
+        if (request.method !== "POST") {
+          return jsonResponse({ detail: "Method Not Allowed" }, 405, cors);
+        }
+        const invalid = validateAsrBody(body);
+        if (invalid) {
+          return jsonResponse({ detail: invalid }, 422, cors);
+        }
+        if ((this.env.DASHSCOPE_API_KEY || "").trim()) {
+          const { status, body: asrBody } = await transcribeWithDashScope(this.env, body);
+          return jsonResponse(asrBody, status, cors);
+        }
+      }
+
       const query = url.search ? url.search.slice(1) : "";
       const { status, body: replyBody } = await this.forwardToAgent(
         request.method,

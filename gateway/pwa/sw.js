@@ -1,4 +1,4 @@
-const CACHE_NAME = "otty-pwa-v7";
+const CACHE_NAME = "otty-pwa-v9";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
