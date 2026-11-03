@@ -593,10 +593,14 @@ async function loadMoreHistory() {
     entry.hasMore = Boolean(page.hasMore);
     stickToBottom = false;
     renderScreen();
-    requestAnimationFrame(() => {
+    const applyScrollOffset = () => {
       const addedHeight = el.viewport.scrollHeight - prevHeight;
-      el.viewport.scrollTop = Math.max(addedHeight + prevTop, 10);
-    });
+      if (addedHeight > 0) {
+        el.viewport.scrollTop = addedHeight + Math.max(prevTop, 0);
+      }
+    };
+    applyScrollOffset();
+    requestAnimationFrame(applyScrollOffset);
   } catch (err) {
     showToast(err.message, true);
     await fetchLatestScreen(active.id);
@@ -916,23 +920,62 @@ el.btnCloseTab.addEventListener("click", () => {
 
 el.btnLoadMore.addEventListener("click", loadMoreHistory);
 
+let lastViewportScrollTop = 0;
+let touchPullStartY = null;
+
 el.viewport.addEventListener("scroll", () => {
+  const currentTop = el.viewport.scrollTop;
+  const scrollingUp = currentTop < lastViewportScrollTop;
+  lastViewportScrollTop = currentTop;
+
   const wasStuck = stickToBottom;
   stickToBottom = isNearBottom();
   el.btnScrollBottom.classList.toggle("hidden", stickToBottom);
-  if (stickToBottom && !wasStuck && state.activeTabId) {
+  if (stickToBottom && !wasStuck && !scrollingUp && state.activeTabId) {
     fetchLatestScreen(state.activeTabId);
     return;
   }
-  if (el.viewport.scrollTop <= 80 && !stickToBottom) {
+  if (currentTop <= 100 && (scrollingUp || !stickToBottom)) {
     loadMoreHistory();
   }
 });
 
+// 手机端：在顶部继续下拉（手指往下滑）或上滑到顶部时自动加载历史记录
+el.viewport.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length === 1) {
+      touchPullStartY = e.touches[0].clientY;
+    }
+  },
+  { passive: true }
+);
+
+el.viewport.addEventListener(
+  "touchmove",
+  (e) => {
+    if (touchPullStartY === null || e.touches.length !== 1) return;
+    const pullDownDelta = e.touches[0].clientY - touchPullStartY;
+    if (pullDownDelta > 16 && el.viewport.scrollTop <= 100) {
+      touchPullStartY = e.touches[0].clientY;
+      loadMoreHistory();
+    }
+  },
+  { passive: true }
+);
+
+el.viewport.addEventListener(
+  "touchend",
+  () => {
+    touchPullStartY = null;
+  },
+  { passive: true }
+);
+
 el.viewport.addEventListener(
   "wheel",
   (e) => {
-    if (e.deltaY < 0 && el.viewport.scrollTop <= 80) {
+    if (e.deltaY < 0 && el.viewport.scrollTop <= 100) {
       loadMoreHistory();
     }
   },
