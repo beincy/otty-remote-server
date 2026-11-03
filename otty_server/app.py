@@ -375,7 +375,14 @@ def create_app(
         tab = await get_tab(tab_id)
         if not tab.pane_id:
             raise HTTPException(409, "The tab has no pane to read")
-        page = await screens.page(tab.pane_id, limit, before)
+        page = await screens.page(
+            tab.pane_id,
+            limit,
+            before,
+            agent=tab.agent,
+            agent_session_id=tab.agent_session_id,
+            cwd=tab.cwd,
+        )
         page.tab_id, page.agent, page.agent_state = tab.id, tab.agent, tab.agent_state
         return page
 
@@ -468,7 +475,14 @@ def create_app(
                 await cli.call("pane", "send-keys", "--pane", tab.pane_id, "key:Enter")
         if body.settle_ms > 0 and (body.backspaces or body.text or body.submit):
             await asyncio.sleep(body.settle_ms / 1000)
-        page = await screens.page(tab.pane_id, body.limit, None)
+        page = await screens.page(
+            tab.pane_id,
+            body.limit,
+            None,
+            agent=tab.agent,
+            agent_session_id=tab.agent_session_id,
+            cwd=tab.cwd,
+        )
         page.tab_id, page.agent, page.agent_state = tab.id, tab.agent, tab.agent_state
         return page
 

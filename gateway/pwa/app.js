@@ -512,10 +512,23 @@ function renderScreen() {
     : "（正在读取终端画面...）";
   el.historyBar.classList.toggle("hidden", !entry?.hasMore);
   if (el.btnLoadMore) {
-    el.btnLoadMore.textContent = loadingHistory ? "⏳ 正在加载更早记录..." : "↑ 上滑自动加载更早记录";
+    el.btnLoadMore.textContent = loadingHistory ? "⏳ 正在加载更早记录..." : "↑ 上滑或点击加载更早记录";
   }
   if (stickToBottom) {
     scrollToBottom();
+  }
+  // PC 大屏下若首次加载的 120 行内容高度不足以撑出滚动条，且仍有历史记录，自动补载一页
+  if (entry?.hasMore && !loadingHistory) {
+    requestAnimationFrame(() => {
+      if (
+        entry?.hasMore &&
+        !loadingHistory &&
+        el.viewport.clientHeight > 0 &&
+        el.viewport.scrollHeight <= el.viewport.clientHeight + 80
+      ) {
+        loadMoreHistory();
+      }
+    });
   }
 }
 
@@ -607,7 +620,7 @@ async function loadMoreHistory() {
   } finally {
     loadingHistory = false;
     if (el.btnLoadMore) {
-      el.btnLoadMore.textContent = "↑ 上滑自动加载更早记录";
+      el.btnLoadMore.textContent = "↑ 上滑或点击加载更早记录";
     }
   }
 }
@@ -935,7 +948,7 @@ el.viewport.addEventListener("scroll", () => {
     fetchLatestScreen(state.activeTabId);
     return;
   }
-  if (currentTop <= 100 && (scrollingUp || !stickToBottom)) {
+  if (currentTop <= 140 && (scrollingUp || !stickToBottom)) {
     loadMoreHistory();
   }
 });
@@ -956,7 +969,7 @@ el.viewport.addEventListener(
   (e) => {
     if (touchPullStartY === null || e.touches.length !== 1) return;
     const pullDownDelta = e.touches[0].clientY - touchPullStartY;
-    if (pullDownDelta > 16 && el.viewport.scrollTop <= 100) {
+    if (pullDownDelta > 16 && el.viewport.scrollTop <= 140) {
       touchPullStartY = e.touches[0].clientY;
       loadMoreHistory();
     }
@@ -975,7 +988,7 @@ el.viewport.addEventListener(
 el.viewport.addEventListener(
   "wheel",
   (e) => {
-    if (e.deltaY < 0 && el.viewport.scrollTop <= 100) {
+    if (e.deltaY < 0 && el.viewport.scrollTop <= 140) {
       loadMoreHistory();
     }
   },

@@ -1,3 +1,6 @@
+import glob
+import json
+import os
 import secrets
 import time
 from collections import OrderedDict
@@ -6,6 +9,216 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+
+
+def _find_claude_jsonl(session_id: str, cwd: str) -> str | None:
+    if session_id:
+        pattern = os.path.expanduser(f"~/.claude/projects/*/{session_id}.jsonl")
+        matches = glob.glob(pattern)
+        if matches:
+            return matches[0]
+    if cwd:
+        slug = "-" + cwd.strip("/").replace("/", "-")
+        project_dir = os.path.expanduser(f"~/.claude/projects/{slug}")
+        if os.path.isdir(project_dir):
+            files = sorted(
+                glob.glob(os.path.join(project_dir, "*.jsonl")),
+                key=os.path.getmtime,
+                reverse=True,
+            )
+            if files:
+                return files[0]
+    return None
+
+
+def _parse_claude_jsonl(fpath: str) -> list[str]:
+    lines: list[str] = []
+    try:
+        with open(fpath, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                t = obj.get("type")
+                if t not in ("user", "assistant"):
+                    continue
+                msg = obj.get("message") or {}
+                content = msg.get("content")
+                if t == "user" and isinstance(content, str):
+                    txt = content.strip()
+                    if (
+                        not txt
+                        or txt.startswith("<local-command")
+                        or txt.startswith("<command-")
+                    ):
+                        continue
+                    lines.append("")
+                    for i, line in enumerate(txt.splitlines()):
+                        lines.append(f"❯ {line}" if i == 0 else f"  {line}")
+                elif t == "assistant" and isinstance(content, list):
+                    for item in content:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("type") == "text":
+                            txt = (item.get("text") or "").strip()
+                            if txt:
+                                lines.append("")
+                                for i, line in enumerate(txt.splitlines()):
+                                    lines.append(f"● {line}" if i == 0 else f"  {line}")
+                        elif item.get("type") == "tool_use":
+                            name = item.get("name") or "Tool"
+                            inp = item.get("input") or {}
+                            summary = (
+                                inp.get("command")
+                                or inp.get("file_path")
+                                or inp.get("pattern")
+                                or ""
+                            )
+                            if isinstance(summary, str):
+                                summary = summary.splitlines()[0][:80]
+                            lines.append(f"● {name}({summary})")
+    except Exception:
+        return []
+    return lines
+
+
+def _find_codex_jsonl(
+    session_id: str, cwd: str, live_lines: list[str]
+) -> str | None:
+    pattern = os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl")
+    try:
+        all_files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    except Exception:
+        return None
+    if not all_files:
+        return None
+
+    by_id = [
+        f for f in all_files if session_id and session_id in os.path.basename(f)
+    ]
+    candidates: list[str] = []
+    if cwd:
+        for fpath in all_files[:40]:
+            try:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
+                    for _ in range(12):
+                        raw = f.readline()
+                        if not raw:
+                            break
+                        obj = json.loads(raw)
+                        p = obj.get("payload")
+                        if isinstance(p, dict) and p.get("cwd") == cwd:
+                            candidates.append(fpath)
+                            break
+            except Exception:
+                continue
+
+    prompts = [
+        line.strip().lstrip("›").strip()
+        for line in live_lines
+        if line.strip().startswith("›") and len(line.strip()) > 3
+    ]
+    if prompts and candidates:
+        for c in candidates:
+            try:
+                with open(c, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+                if any(p[:16] in text for p in prompts if p):
+                    return c
+            except Exception:
+                continue
+
+    if by_id:
+        return by_id[0]
+    return candidates[0] if candidates else None
+
+
+def _parse_codex_jsonl(fpath: str) -> list[str]:
+    lines: list[str] = []
+    try:
+        with open(fpath, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if obj.get("type") != "response_item":
+                    continue
+                p = obj.get("payload") or {}
+                if p.get("type") != "message":
+                    continue
+                role = p.get("role")
+                content = p.get("content") or []
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    txt = (item.get("text") or "").strip()
+                    if not txt:
+                        continue
+                    if role == "user":
+                        if (
+                            txt.startswith("<environment_context>")
+                            or txt.startswith("# AGENTS.md")
+                            or txt.startswith("<INSTRUCTIONS>")
+                        ):
+                            continue
+                        lines.append("")
+                        for i, line in enumerate(txt.splitlines()):
+                            lines.append(f"› {line}" if i == 0 else f"  {line}")
+                    elif role == "assistant":
+                        lines.append("")
+                        for i, line in enumerate(txt.splitlines()):
+                            lines.append(f"• {line}" if i == 0 else f"  {line}")
+    except Exception:
+        return []
+    return lines
+
+
+def load_agent_history_fallback(
+    agent: str,
+    session_id: str,
+    cwd: str,
+    live_lines: list[str],
+    max_lines: int = 2000,
+) -> list[str]:
+    """When a TUI agent (Codex / Claude Code in alternate-screen or resumed mode)
+    only exposes the visible viewport rows via `otty pane capture`, load its
+    earlier conversation turns from the local session JSONL file."""
+    agent_lower = (agent or "").lower()
+    history: list[str] = []
+    if "claude" in agent_lower:
+        fpath = _find_claude_jsonl(session_id, cwd)
+        if fpath:
+            history = _parse_claude_jsonl(fpath)
+    elif "codex" in agent_lower:
+        fpath = _find_codex_jsonl(session_id, cwd, live_lines)
+        if fpath:
+            history = _parse_codex_jsonl(fpath)
+    if not history:
+        return []
+
+    first_prompts = [
+        line.strip()
+        for line in live_lines
+        if line.strip().startswith(("› ", "❯ ", "● ", "• ")) and len(line.strip()) > 6
+    ]
+    if first_prompts:
+        anchor = first_prompts[0][:24]
+        for idx in range(len(history) - 1, max(-1, len(history) - 120), -1):
+            if history[idx].strip().startswith(anchor[:16]):
+                history = history[:idx]
+                break
+
+    while history and not history[-1].strip():
+        history.pop()
+    if not history:
+        return []
+
+    combined = history + ["", "─── 以上为历史会话记录 · 以下为当前终端实时画面 ───", ""]
+    return combined[-max_lines:]
 
 
 class ScreenPage(BaseModel):
@@ -69,7 +282,13 @@ class Screens:
         self.snapshots[key] = snapshot
         return key
 
-    async def _capture(self, pane_id: str) -> Snapshot:
+    async def _capture(
+        self,
+        pane_id: str,
+        agent: str = "",
+        agent_session_id: str = "",
+        cwd: str = "",
+    ) -> Snapshot:
         text = await self.cli.call(
             "pane",
             "capture",
@@ -89,6 +308,16 @@ class Screens:
         lines = [line.rstrip() for line in lines]
         while lines and not lines[-1]:
             lines.pop()
+        if len(lines) <= 80 and (agent or agent_session_id):
+            fallback = load_agent_history_fallback(
+                agent=agent,
+                session_id=agent_session_id,
+                cwd=cwd,
+                live_lines=lines,
+                max_lines=max(0, self.max_lines - len(lines)),
+            )
+            if fallback:
+                lines = fallback + lines
         return Snapshot(
             pane_id=pane_id,
             lines=lines[-self.max_lines :],
@@ -97,10 +326,23 @@ class Screens:
             limited=len(lines) >= self.max_lines,
         )
 
-    async def page(self, pane_id: str, limit: int, before: str | None) -> ScreenPage:
+    async def page(
+        self,
+        pane_id: str,
+        limit: int,
+        before: str | None,
+        agent: str = "",
+        agent_session_id: str = "",
+        cwd: str = "",
+    ) -> ScreenPage:
         self._expire()
         if before is None:
-            snapshot = await self._capture(pane_id)
+            snapshot = await self._capture(
+                pane_id,
+                agent=agent,
+                agent_session_id=agent_session_id,
+                cwd=cwd,
+            )
             key = self._store(snapshot)
             end = len(snapshot.lines)
         else:
