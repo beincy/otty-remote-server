@@ -616,20 +616,87 @@ export default {
           { "WWW-Authenticate": "Bearer", ...cors }
         );
       }
+      const apiPath = instApiMatch ? instApiMatch[2] : directApiMatch[1];
       const tokenHash = await sha256Hex(token);
       const id = env.OTTY_HUB.idFromName(tokenHash);
       const headers = new Headers(request.headers);
       headers.set("X-Otty-Mode", "http-proxy");
       headers.set("X-Otty-Token-Hash", tokenHash);
-      headers.set(
-        "X-Otty-Api-Path",
-        instApiMatch ? instApiMatch[2] : directApiMatch[1]
-      );
+      headers.set("X-Otty-Api-Path", apiPath);
       if (instApiMatch) {
         headers.set("X-Otty-Instance-Id", decodeURIComponent(instApiMatch[1]));
       } else if (request.headers.get("X-Instance-Id")) {
         headers.set("X-Otty-Instance-Id", request.headers.get("X-Instance-Id"));
       }
+
+      // 语音识别接口在无状态 Worker 层直接处理，避免长连接保活的旧 Durable Object
+      // 读不到新配置的环境变量或落入旧版路由返回 404。
+      if (apiPath === "/api/v1/asr") {
+        if (request.method !== "POST") {
+          return jsonResponse(
+            { detail: "Method Not Allowed (use POST /api/v1/asr)" },
+            405,
+            cors
+          );
+        }
+        // 1. 权限校验：确认该 Bearer Token 对应在线实例
+        const authRes = await env.OTTY_HUB.get(id).fetch(
+          new Request(request.url, {
+            method: "POST",
+            headers: new Headers(headers),
+            body: "auth-check",
+          })
+        );
+        if (authRes.status === 401 || authRes.status === 503) {
+          return authRes;
+        }
+
+        // 2. 校验请求体
+        let body = null;
+        try {
+          body = await request.json();
+        } catch {
+          return jsonResponse(
+            { detail: "Request body must be valid JSON" },
+            400,
+            cors
+          );
+        }
+        const invalid = validateAsrBody(body);
+        if (invalid) {
+          return jsonResponse({ detail: invalid }, 422, cors);
+        }
+
+        // 3. 若 Worker 配置了 DASHSCOPE_API_KEY，直接请求百炼 ASR
+        if ((env.DASHSCOPE_API_KEY || "").trim()) {
+          const { status, body: asrBody } = await transcribeWithDashScope(
+            env,
+            body
+          );
+          return jsonResponse(asrBody, status, cors);
+        }
+
+        // 4. 否则转发给本地 Otty Server 识别
+        const forwardRes = await env.OTTY_HUB.get(id).fetch(
+          new Request(request.url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+          })
+        );
+        if (forwardRes.status === 404) {
+          return jsonResponse(
+            {
+              detail:
+                "未配置 DASHSCOPE_API_KEY：请在 Cloudflare Worker 后台 Variables and Secrets 中配置 DASHSCOPE_API_KEY",
+            },
+            503,
+            cors
+          );
+        }
+        return forwardRes;
+      }
+
       return env.OTTY_HUB.get(id).fetch(
         new Request(request.url, {
           method: request.method,

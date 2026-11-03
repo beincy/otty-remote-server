@@ -46,7 +46,6 @@ let pendingFlushSubmit = false;
 // 语音输入：识别结果作为“草稿”填入输入框，草稿存在期间暂停流式同步（与流式输入互斥），
 // 用户修改后点发送才一次性写入终端。
 const voiceDraftByTab = {};
-let voiceMode = false;
 let voiceTranscribing = false;
 
 const el = {
@@ -76,11 +75,7 @@ const el = {
   awaitingBanner: document.getElementById("awaiting-banner"),
   keyBar: document.getElementById("key-bar"),
   btnToggleKeys: document.getElementById("btn-toggle-keys"),
-  btnVoiceMode: document.getElementById("btn-voice-mode"),
-  btnHoldTalk: document.getElementById("btn-hold-talk"),
   composerPill: document.getElementById("composer-pill"),
-  iconMic: document.getElementById("icon-mic"),
-  iconKeyboard: document.getElementById("icon-keyboard"),
   voiceOverlay: document.getElementById("voice-overlay"),
   voiceTimer: document.getElementById("voice-timer"),
   voiceHint: document.getElementById("voice-hint"),
@@ -463,21 +458,21 @@ function renderTabs() {
   el.keypadDrawer.classList.toggle("hidden", !showKeypad);
   el.btnToggleKeys.classList.toggle("active", showKeypad);
 
-  const canInput = active.writable && !isAwaiting;
+  const canInput = active.writable && !isAwaiting && !voiceTranscribing;
   el.msgInput.disabled = !canInput;
   el.btnSend.disabled = !canInput;
-  el.btnVoiceMode.disabled = !canInput && !voiceMode;
-  el.btnHoldTalk.disabled = !canInput || voiceTranscribing;
-  if (active.protected) {
+  if (voiceTranscribing) {
+    el.msgInput.placeholder = "⏳ 正在识别语音...";
+  } else if (active.protected) {
     el.msgInput.placeholder = "服务宿主 Tab 受保护";
   } else if (!active.writable) {
     el.msgInput.placeholder = "普通终端只读";
   } else if (isAwaiting) {
     el.msgInput.placeholder = "请先点上方按键回应 Agent...";
   } else if (state.inputMode === "stream") {
-    el.msgInput.placeholder = `实时流式输入到 ${tabDisplayName(active)}...`;
+    el.msgInput.placeholder = `流式输入到 ${tabDisplayName(active)}（长按语音）...`;
   } else {
-    el.msgInput.placeholder = `发送给 ${tabDisplayName(active)}...`;
+    el.msgInput.placeholder = `发送给 ${tabDisplayName(active)}（长按语音）...`;
   }
 }
 
@@ -1008,49 +1003,33 @@ el.msgInput.addEventListener("keydown", (e) => {
 el.btnSend.addEventListener("click", sendMessage);
 
 // ---------------------------------------------------------------------------
-// 语音输入：按住说话 → 松开识别 → 结果填入输入框（可修改后发送），上滑取消
+// 语音输入：直接长按输入框 → 自动弹出语音浮层开始录音 → 松手识别填入输入框
 // 录音在浏览器内编码为 16kHz 单声道 WAV，经鉴权的 /api/v1/asr 接口识别
 // ---------------------------------------------------------------------------
 const VOICE_SAMPLE_RATE = 16000;
 const VOICE_MAX_MS = 60000;
-const VOICE_MIN_MS = 600;
+const VOICE_MIN_MS = 500;
 const VOICE_CANCEL_DISTANCE = 60;
+const LONG_PRESS_MS = 300;
+const MOVE_SLOP_PX = 14;
 
 let voiceRec = null;
 let voicePress = null;
-
-function setVoiceMode(on) {
-  voiceMode = on;
-  el.btnVoiceMode.classList.toggle("active", on);
-  el.iconMic.classList.toggle("hidden", on);
-  el.iconKeyboard.classList.toggle("hidden", !on);
-  el.btnHoldTalk.classList.toggle("hidden", !on);
-  el.composerPill.classList.toggle("hidden", on);
-  el.btnVoiceMode.title = on ? "切换回键盘输入" : "切换语音输入（按住说话）";
-  if (!on && window.innerWidth >= 768) el.msgInput.focus();
-}
+let holdCandidate = null;
 
 function updateVoiceUi(phase) {
-  const btn = el.btnHoldTalk;
-  btn.classList.remove("recording", "cancel", "busy");
+  el.composerPill.classList.remove("recording", "cancel");
   el.voiceOverlay.classList.remove("cancel");
   if (phase === "recording") {
-    btn.classList.add("recording");
-    btn.textContent = "松开 识别";
+    el.composerPill.classList.add("recording");
     el.voiceHint.textContent = "松开 识别，上滑 取消";
     el.voiceOverlay.classList.remove("hidden");
   } else if (phase === "cancel") {
-    btn.classList.add("cancel");
-    btn.textContent = "松开 取消";
+    el.composerPill.classList.add("cancel");
     el.voiceHint.textContent = "松开手指，取消发送";
     el.voiceOverlay.classList.add("cancel");
     el.voiceOverlay.classList.remove("hidden");
-  } else if (phase === "busy") {
-    btn.classList.add("busy");
-    btn.textContent = "识别中...";
-    el.voiceOverlay.classList.add("hidden");
   } else {
-    btn.textContent = "按住 说话";
     el.voiceOverlay.classList.add("hidden");
   }
 }
@@ -1070,7 +1049,6 @@ async function startVoiceRecording() {
     showToast("当前浏览器不支持录音", true);
     return null;
   }
-  // 在用户手势内创建并 resume，兼容 iOS Safari
   const ctx = new AudioCtx();
   ctx.resume().catch(() => {});
   let stream;
@@ -1181,8 +1159,8 @@ function applyVoiceResult(tabId, text) {
   inputByTab[tabId] = next;
   if (tabId === state.activeTabId) {
     el.msgInput.value = next;
-    setVoiceMode(false);
     autoResizeInput();
+    el.msgInput.focus();
   }
 }
 
@@ -1210,8 +1188,8 @@ async function finishVoice(cancelled) {
 
   const tabId = press?.tabId || state.activeTabId;
   voiceTranscribing = true;
-  el.btnHoldTalk.disabled = true;
-  updateVoiceUi("busy");
+  updateVoiceUi("idle");
+  renderTabs();
   try {
     const samples = downsampleBuffer(rec.chunks, rec.inputRate, VOICE_SAMPLE_RATE);
     const wav = encodeWav(samples, VOICE_SAMPLE_RATE);
@@ -1230,39 +1208,31 @@ async function finishVoice(cancelled) {
     showToast(`语音识别失败：${err.message}`, true);
   } finally {
     voiceTranscribing = false;
-    updateVoiceUi("idle");
     renderTabs();
   }
 }
 
-el.btnVoiceMode.addEventListener("click", () => {
-  if (voiceRec || voiceTranscribing) return;
-  setVoiceMode(!voiceMode);
-});
-
-el.btnHoldTalk.addEventListener("contextmenu", (e) => e.preventDefault());
-
-el.btnHoldTalk.addEventListener("pointerdown", async (e) => {
-  if (e.button !== undefined && e.button !== 0) return;
-  e.preventDefault();
-  const active = currentTab();
-  if (!active || !active.writable || active.agent_state === "awaiting") {
-    showToast("当前会话不可输入", true);
-    return;
+function clearHoldCandidate() {
+  if (holdCandidate) {
+    clearTimeout(holdCandidate.timer);
+    holdCandidate = null;
   }
+}
+
+async function triggerLongPressVoice(startY, tabId) {
   if (voiceRec || voicePress || voiceTranscribing) return;
+  clearTimeout(streamTimer);
   try {
-    el.btnHoldTalk.setPointerCapture(e.pointerId);
+    window.getSelection()?.removeAllRanges();
+    el.msgInput.blur();
   } catch {
     // Ignore
   }
-  // 停掉进行中的流式同步，语音与流式输入互斥
-  clearTimeout(streamTimer);
-  const press = { startY: e.clientY, cancel: false, released: false, tabId: active.id };
+  const press = { startY, cancel: false, released: false, tabId };
   voicePress = press;
   updateVoiceUi("recording");
   el.voiceTimer.textContent = "0:00";
-  if (navigator.vibrate) navigator.vibrate(15);
+  if (navigator.vibrate) navigator.vibrate(18);
 
   const rec = await startVoiceRecording();
   if (!rec) {
@@ -1271,10 +1241,9 @@ el.btnHoldTalk.addEventListener("pointerdown", async (e) => {
     return;
   }
   if (press.released || voicePress !== press) {
-    // 首次授权弹窗期间已松手
     stopVoiceRecording(rec);
     updateVoiceUi("idle");
-    showToast("麦克风已就绪，请重新按住说话");
+    showToast("麦克风已就绪，请重新长按输入框说话");
     return;
   }
   voiceRec = rec;
@@ -1286,19 +1255,57 @@ el.btnHoldTalk.addEventListener("pointerdown", async (e) => {
       finishVoice(false);
     }
   }, 200);
-});
+}
 
-el.btnHoldTalk.addEventListener("pointermove", (e) => {
-  const press = voicePress;
-  if (!press) return;
-  const shouldCancel = press.startY - e.clientY > VOICE_CANCEL_DISTANCE;
-  if (shouldCancel !== press.cancel) {
-    press.cancel = shouldCancel;
-    updateVoiceUi(shouldCancel ? "cancel" : "recording");
+el.msgInput.addEventListener("contextmenu", (e) => {
+  if (holdCandidate || voicePress || voiceRec) {
+    e.preventDefault();
   }
 });
 
-el.btnHoldTalk.addEventListener("pointerup", () => {
+el.msgInput.addEventListener("pointerdown", (e) => {
+  if (e.button !== undefined && e.button !== 0) return;
+  const active = currentTab();
+  if (!active || !active.writable || active.agent_state === "awaiting") return;
+  if (voiceRec || voicePress || voiceTranscribing) return;
+
+  clearHoldCandidate();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const tabId = active.id;
+  const timer = setTimeout(() => {
+    holdCandidate = null;
+    triggerLongPressVoice(startY, tabId);
+  }, LONG_PRESS_MS);
+  holdCandidate = { startX, startY, timer };
+});
+
+window.addEventListener(
+  "pointermove",
+  (e) => {
+    if (holdCandidate) {
+      const dx = Math.abs(e.clientX - holdCandidate.startX);
+      const dy = Math.abs(e.clientY - holdCandidate.startY);
+      if (dx > MOVE_SLOP_PX || dy > MOVE_SLOP_PX) {
+        clearHoldCandidate();
+      }
+      return;
+    }
+    const press = voicePress;
+    if (!press) return;
+    const shouldCancel = press.startY - e.clientY > VOICE_CANCEL_DISTANCE;
+    if (shouldCancel !== press.cancel) {
+      press.cancel = shouldCancel;
+      updateVoiceUi(shouldCancel ? "cancel" : "recording");
+    }
+  },
+  { passive: true }
+);
+
+function handleVoicePointerEnd(cancelled) {
+  if (holdCandidate) {
+    clearHoldCandidate();
+  }
   const press = voicePress;
   if (!press) return;
   press.released = true;
@@ -1307,20 +1314,13 @@ el.btnHoldTalk.addEventListener("pointerup", () => {
     updateVoiceUi("idle");
     return;
   }
-  finishVoice(press.cancel);
-});
+  finishVoice(cancelled ? true : press.cancel);
+}
 
-el.btnHoldTalk.addEventListener("pointercancel", () => {
-  const press = voicePress;
-  if (!press) return;
-  press.released = true;
-  if (!voiceRec) {
-    voicePress = null;
-    updateVoiceUi("idle");
-    return;
-  }
-  finishVoice(true);
-});
+window.addEventListener("pointerup", () => handleVoicePointerEnd(false));
+window.addEventListener("pointercancel", () => handleVoicePointerEnd(true));
+window.addEventListener("touchend", () => handleVoicePointerEnd(false), { passive: true });
+window.addEventListener("touchcancel", () => handleVoicePointerEnd(true), { passive: true });
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.token) {
