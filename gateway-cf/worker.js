@@ -562,6 +562,9 @@ export default {
           headers.set(k, v);
         }
       }
+      if (assetPath === "/sw.js") {
+        headers.set("Service-Worker-Allowed", "/");
+      }
       return new Response(res.body, { status: res.status, headers });
     }
 

@@ -34,7 +34,7 @@ def _mount_pwa_at(app: FastAPI, base: str) -> None:
         return FileResponse(
             PWA_DIR / "sw.js",
             media_type="application/javascript; charset=utf-8",
-            headers=NO_CACHE_HEADERS,
+            headers={**NO_CACHE_HEADERS, "Service-Worker-Allowed": "/"},
         )
 
     @app.get(base + "/icon.svg", include_in_schema=False)

@@ -97,6 +97,7 @@ const el = {
   btnCloseTab: document.getElementById("btn-close-tab"),
   btnPushToggle: document.getElementById("btn-push-toggle"),
   btnPushTest: document.getElementById("btn-push-test"),
+  pushStatusHint: document.getElementById("push-status-hint"),
   fontsizeGroup: document.getElementById("fontsize-group"),
   inputToken: document.getElementById("input-token"),
   inputInstance: document.getElementById("input-instance"),
@@ -831,18 +832,50 @@ function urlBase64ToUint8Array(base64String) {
 
 let pushSubscribed = false;
 
+function setPushHint(text, kind = "") {
+  if (!el.pushStatusHint) return;
+  el.pushStatusHint.textContent = text || "";
+  el.pushStatusHint.className = `field-hint${kind ? ` ${kind}` : ""}`;
+}
+
+async function ensureServiceWorkerReady() {
+  const swPath = location.pathname.startsWith("/otty") ? "/otty/sw.js" : "/sw.js";
+  let reg = await navigator.serviceWorker.register(swPath, { scope: "/" });
+  if (reg.active) return reg;
+  const worker = reg.installing || reg.waiting;
+  if (worker) {
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 3500);
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "activated" || reg.active) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+  }
+  return reg;
+}
+
 async function refreshPushUiState() {
   if (!el.btnPushToggle) return;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    pushSubscribed = false;
+    el.btnPushToggle.classList.remove("active");
+    el.btnPushToggle.textContent = "🔕 开启空闲通知";
+    setPushHint(
+      "💡 当前环境不支持直接弹窗：iPhone 请先点 Safari 底部分享 →「添加到主屏幕」，从主屏幕图标打开后即可开启锁屏推送。"
+    );
+    return;
+  }
   let localSub = null;
-  if ("serviceWorker" in navigator && "PushManager" in window) {
-    try {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (reg && reg.pushManager) {
-        localSub = await reg.pushManager.getSubscription();
-      }
-    } catch {
-      // Ignore
+  try {
+    const reg = await ensureServiceWorkerReady();
+    if (reg && reg.pushManager) {
+      localSub = await reg.pushManager.getSubscription();
     }
+  } catch {
+    // Ignore
   }
   let serverEnabled = false;
   if (state.token) {
@@ -856,41 +889,62 @@ async function refreshPushUiState() {
   pushSubscribed = Boolean(localSub && serverEnabled);
   el.btnPushToggle.classList.toggle("active", pushSubscribed);
   el.btnPushToggle.textContent = pushSubscribed ? "🔔 已开启空闲通知" : "🔕 开启空闲通知";
+  setPushHint(
+    pushSubscribed
+      ? "✅ 已开启：当任意 Agent 从忙碌变为空闲（或等待确认）时将推送通知。"
+      : "点击上方「开启空闲通知」授权系统通知权限。",
+    pushSubscribed ? "ok" : ""
+  );
 }
 
 async function togglePushNotifications() {
   if (!state.token) {
+    setPushHint("请先在下方填写并保存实例 Token", "error");
     showToast("请先配置并保存实例 Token", true);
     return;
   }
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-    showToast("iOS 请先点底部分享 →「添加到主屏幕」，从桌面图标打开即可开启通知", true);
+    const msg = "iOS 必须先点底部分享 →「添加到主屏幕」，从桌面图标打开后才能开启系统通知";
+    setPushHint(msg, "error");
+    showToast(msg, true);
     return;
   }
+
   el.btnPushToggle.disabled = true;
+  el.btnPushToggle.textContent = "⏳ 正在处理...";
+  setPushHint("正在请求系统通知权限与注册推送服务...");
+
   try {
-    const reg = await navigator.serviceWorker.ready;
-    const existing = await reg.pushManager.getSubscription();
-    if (pushSubscribed && existing) {
-      const ep = existing.endpoint;
-      await existing.unsubscribe().catch(() => {});
-      await apiRequest("/push/unsubscribe", { method: "POST", body: { endpoint: ep } });
-      pushSubscribed = false;
-      el.btnPushToggle.classList.remove("active");
-      el.btnPushToggle.textContent = "🔕 开启空闲通知";
-      showToast("已关闭空闲消息推送");
-      return;
+    // 关键：在 iOS WebKit 中，Notification.requestPermission() 必须在点击事件里第一时间调用，
+    // 否则在经过其它异步 await 后，系统会丢弃用户手势上下文导致不弹出授权框！
+    if (!pushSubscribed && Notification.permission !== "granted") {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        const msg = "未授予通知权限，请在系统设置中允许此应用的通知";
+        setPushHint(msg, "error");
+        showToast(msg, true);
+        return;
+      }
     }
 
-    const perm = await Notification.requestPermission();
-    if (perm !== "granted") {
-      showToast("未授予通知权限，请在系统设置中允许通知", true);
+    const reg = await ensureServiceWorkerReady();
+    const existing = reg.pushManager ? await reg.pushManager.getSubscription() : null;
+
+    if (pushSubscribed) {
+      const ep = existing ? existing.endpoint : null;
+      if (existing) {
+        await existing.unsubscribe().catch(() => {});
+      }
+      await apiRequest("/push/unsubscribe", { method: "POST", body: { endpoint: ep } });
+      pushSubscribed = false;
+      setPushHint("已关闭空闲消息推送。");
+      showToast("已关闭空闲消息推送");
       return;
     }
 
     const st = await apiRequest("/push/status");
     if (!st?.publicKey) {
-      throw new Error("未获取到服务端 VAPID 公钥");
+      throw new Error("未获取到服务端 VAPID 公钥（请确认本地 Otty Server 在线）");
     }
     if (existing) {
       await existing.unsubscribe().catch(() => {});
@@ -904,13 +958,15 @@ async function togglePushNotifications() {
       body: sub.toJSON(),
     });
     pushSubscribed = true;
-    el.btnPushToggle.classList.add("active");
-    el.btnPushToggle.textContent = "🔔 已开启空闲通知";
-    showToast("✅ 已开启！Agent 从忙碌变为空闲时将推送通知");
+    setPushHint("✅ 已开启：当任意 Agent 从忙碌变为空闲时将推送通知。", "ok");
+    showToast("✅ 已开启空闲推送通知");
   } catch (err) {
+    setPushHint(`开启通知失败：${err.message}`, "error");
     showToast(`开启通知失败：${err.message}`, true);
   } finally {
     el.btnPushToggle.disabled = false;
+    el.btnPushToggle.classList.toggle("active", pushSubscribed);
+    el.btnPushToggle.textContent = pushSubscribed ? "🔔 已开启空闲通知" : "🔕 开启空闲通知";
   }
 }
 
@@ -1564,8 +1620,9 @@ if (window.visualViewport) {
 }
 
 if ("serviceWorker" in navigator) {
+  const swPath = location.pathname.startsWith("/otty") ? "/otty/sw.js" : "/sw.js";
   navigator.serviceWorker
-    .register("/otty/sw.js")
+    .register(swPath, { scope: "/" })
     .then((reg) => reg.update())
     .catch(() => {});
   navigator.serviceWorker.addEventListener("message", (event) => {
