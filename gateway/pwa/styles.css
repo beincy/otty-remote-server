@@ -13,6 +13,7 @@
   --red: #ef4444;
   --screen-font-size: 12px;
   --vvh: 100dvh;
+  --vv-top: 0px;
 }
 
 * {
@@ -38,10 +39,14 @@ body {
 }
 
 #app {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: var(--vvh);
+  height: var(--vvh, 100dvh);
   padding-top: env(safe-area-inset-top, 0px);
   background: var(--bg-page);
 }
@@ -340,6 +345,10 @@ body {
   flex-shrink: 0;
 }
 
+html.keyboard-open .m-footer {
+  padding-bottom: 6px;
+}
+
 .keypad-drawer {
   margin-bottom: 8px;
   padding: 8px;
@@ -508,6 +517,7 @@ body {
 
 .msg-input {
   flex: 1;
+  height: 30px;
   min-height: 30px;
   max-height: 110px;
   padding: 5px 0;
@@ -515,7 +525,7 @@ body {
   background: transparent;
   color: var(--text-primary);
   font-size: 15px;
-  line-height: 1.38;
+  line-height: 20px;
   resize: none;
   outline: none;
   font-family: inherit;
@@ -921,6 +931,7 @@ body {
 /* 5. PC 桌面端全屏分栏布局（Codex 风格左侧 Tabs + 右侧全屏终端） */
 @media (min-width: 768px) {
   #app {
+    top: 0;
     flex-direction: row;
     width: 100vw;
     max-width: none;

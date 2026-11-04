@@ -12,7 +12,7 @@
   <link rel="manifest" href="/otty/manifest.json" />
   <link rel="icon" type="image/svg+xml" href="/otty/icon.svg" />
   <link rel="apple-touch-icon" href="/otty/icon.svg" />
-  <link rel="stylesheet" href="/otty/styles.css?v=10" />
+  <link rel="stylesheet" href="/otty/styles.css?v=12" />
 </head>
 <body>
   <div id="app">
@@ -113,6 +113,7 @@
             <button class="key-pad-btn primary" data-key="Enter">↵ 确认 (Enter)</button>
             <button class="key-pad-btn" data-key="Up">↑ 上移</button>
             <button class="key-pad-btn" data-key="Down">↓ 下移</button>
+            <button class="key-pad-btn" data-key="Option+Up">⌥↑ Option+上</button>
             <button class="key-pad-btn" data-key="Tab">Tab 补全</button>
             <button class="key-pad-btn" data-key="Backspace">⌫ 退格</button>
             <button class="key-pad-btn" data-key="Esc">Esc 取消</button>
@@ -134,7 +135,7 @@
               id="msg-input"
               class="msg-input"
               rows="1"
-              placeholder="点击输入，长按语音输入..."
+              placeholder="按住说话"
               autocomplete="off"
               autocorrect="off"
               autocapitalize="off"
@@ -238,6 +239,6 @@
     </div>
   </div>
 
-  <script type="module" src="/otty/app.js?v=11"></script>
+  <script type="module" src="/otty/app.js?v=12"></script>
 </body>
 </html>

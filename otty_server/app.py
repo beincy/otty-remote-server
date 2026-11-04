@@ -24,6 +24,15 @@ TRUTHY = {"1", "true", "yes", "on"}
 
 # Keys a remote client may press, e.g. to answer an agent's approval menu.
 # Names follow `otty pane send-keys` (Esc, not Escape; Ctrl+C, not C-c).
+# Modified arrow keys not natively named in `otty pane send-keys` (e.g. Option+Up)
+# are sent as raw terminal escape sequences via `otty pane send-text`.
+RAW_KEY_SEQUENCES = {
+    "Option+Up": "\x1b[1;3A",
+    "Alt+Up": "\x1b[1;3A",
+    "Option+Down": "\x1b[1;3B",
+    "Alt+Down": "\x1b[1;3B",
+}
+
 NAMED_KEYS = {
     "Enter",
     "Tab",
@@ -38,6 +47,7 @@ NAMED_KEYS = {
     "PageUp",
     "PageDown",
     "Ctrl+C",
+    *RAW_KEY_SEQUENCES.keys(),
 }
 
 
@@ -431,11 +441,33 @@ def create_app(
         async with writes:
             tab = await get_tab(tab_id)
             ensure_writable(tab)
-            parts = [f"key:{k}" if k in NAMED_KEYS else k for k in body.keys]
-            # No `--` separator: OttyCLI appends `--json`, which would then be typed
-            # as text. Parts are single characters or `key:` names, never options
-            # (a lone "-" is a positional to the CLI).
-            receipt = await cli.call("pane", "send-keys", "--pane", tab.pane_id, *parts)
+            receipt = None
+            normal_parts: list[str] = []
+            for k in body.keys:
+                if k in RAW_KEY_SEQUENCES:
+                    if normal_parts:
+                        receipt = await cli.call(
+                            "pane", "send-keys", "--pane", tab.pane_id, *normal_parts
+                        )
+                        normal_parts = []
+                    receipt = await cli.call(
+                        "pane",
+                        "send-text",
+                        "--pane",
+                        tab.pane_id,
+                        "--stdin",
+                        "--no-escape",
+                        text=RAW_KEY_SEQUENCES[k],
+                    )
+                else:
+                    normal_parts.append(f"key:{k}" if k in NAMED_KEYS else k)
+            if normal_parts:
+                # No `--` separator: OttyCLI appends `--json`, which would then be typed
+                # as text. Parts are single characters or `key:` names, never options
+                # (a lone "-" is a positional to the CLI).
+                receipt = await cli.call(
+                    "pane", "send-keys", "--pane", tab.pane_id, *normal_parts
+                )
         return Submission(
             tab_id=tab.id,
             pane_id=tab.pane_id,

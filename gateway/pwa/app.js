@@ -462,17 +462,15 @@ function renderTabs() {
   el.msgInput.disabled = !canInput;
   el.btnSend.disabled = !canInput;
   if (voiceTranscribing) {
-    el.msgInput.placeholder = "⏳ 正在识别语音...";
+    el.msgInput.placeholder = "⏳ 正在识别...";
   } else if (active.protected) {
-    el.msgInput.placeholder = "服务宿主 Tab 受保护";
+    el.msgInput.placeholder = "宿主受保护";
   } else if (!active.writable) {
-    el.msgInput.placeholder = "普通终端只读";
+    el.msgInput.placeholder = "只读";
   } else if (isAwaiting) {
-    el.msgInput.placeholder = "请先点上方按键回应 Agent...";
-  } else if (state.inputMode === "stream") {
-    el.msgInput.placeholder = `流式输入到 ${tabDisplayName(active)}（长按语音）...`;
+    el.msgInput.placeholder = "请点上方按键回应";
   } else {
-    el.msgInput.placeholder = `发送给 ${tabDisplayName(active)}（长按语音）...`;
+    el.msgInput.placeholder = "按住说话";
   }
 }
 
@@ -792,7 +790,11 @@ function startBackgroundLoop() {
 }
 
 function autoResizeInput() {
-  el.msgInput.style.height = "auto";
+  if (!el.msgInput.value) {
+    el.msgInput.style.height = "30px";
+    return;
+  }
+  el.msgInput.style.height = "30px";
   el.msgInput.style.height = `${Math.min(el.msgInput.scrollHeight, 110)}px`;
 }
 
@@ -1399,11 +1401,35 @@ window.addEventListener("resize", () => {
 });
 
 if (window.visualViewport) {
+  let layoutMaxHeight = Math.max(window.innerHeight, window.visualViewport.height);
   const updateViewport = () => {
-    document.documentElement.style.setProperty("--vvh", `${window.visualViewport.height}px`);
+    const vv = window.visualViewport;
+    if (!vv) return;
+    if (vv.height > layoutMaxHeight) {
+      layoutMaxHeight = vv.height;
+    }
+    const kbOpen = layoutMaxHeight - vv.height > 110;
+    document.documentElement.classList.toggle("keyboard-open", kbOpen);
+    document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+    document.documentElement.style.setProperty(
+      "--vv-top",
+      `${Math.max(0, Math.round(vv.offsetTop))}px`
+    );
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      window.scrollTo(0, 0);
+    }
     if (stickToBottom) scrollToBottom();
   };
   window.visualViewport.addEventListener("resize", updateViewport);
+  window.visualViewport.addEventListener("scroll", updateViewport);
+  el.msgInput.addEventListener("focus", () => {
+    setTimeout(updateViewport, 60);
+    setTimeout(updateViewport, 250);
+  });
+  el.msgInput.addEventListener("blur", () => {
+    setTimeout(updateViewport, 60);
+    setTimeout(updateViewport, 250);
+  });
   updateViewport();
 }
 

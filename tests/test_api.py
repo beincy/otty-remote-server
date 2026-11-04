@@ -510,3 +510,17 @@ def test_explicit_cors_preflight():
         )
         assert response.status_code == 200
         assert response.headers["access-control-allow-origin"] == "https://example.com"
+
+
+def test_send_option_up_key(setup):
+    client, cli, _ = setup
+    response = client.post(
+        "/api/v1/tabs/t_agent/keys",
+        headers=AUTH,
+        json={"keys": ["Option+Up"]},
+    )
+    assert response.status_code == 200
+    assert writes(cli) == [
+        ("pane", "send-text", "--pane", "p_agent", "--stdin", "--no-escape")
+    ]
+    assert cli.calls[-1][1] == "\x1b[1;3A"
