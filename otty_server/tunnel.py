@@ -218,11 +218,14 @@ class TunnelClient:
             async def watch_tabs():
                 while True:
                     await asyncio.sleep(self.push_interval)
-                    if self.subscribers <= 0:
+                    push_mgr = getattr(self.app.state, "push", None)
+                    has_push = bool(push_mgr and push_mgr.has_subscriptions)
+                    # 若既没有在线浏览器订阅，也没有开启后台 Web Push 通知，则不轮询 Otty
+                    if self.subscribers <= 0 and not has_push:
                         continue
                     with suppress(OSError, RuntimeError, httpx.HTTPError):
                         event = await self.poll_tabs_once(client)
-                        if event is not None:
+                        if event is not None and self.subscribers > 0:
                             await send_json(event)
 
             watcher = asyncio.create_task(watch_tabs())

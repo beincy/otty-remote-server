@@ -17,6 +17,7 @@ from gateway.asr import AsrRequest, AsrResult, AsrSettings, transcribe
 from gateway.pwa import mount_pwa
 
 from .cli import EXIT_TIMEOUT, OttyCLI, OttyError
+from .push import PushManager, PushStatusOut, PushSubscriptionIn, PushUnsubscribeIn
 from .screens import ScreenPage, Screens
 
 MIN_TOKEN_LENGTH = 16
@@ -233,10 +234,12 @@ def create_app(
     settings: Settings | None = None,
     cli: OttyCLI | None = None,
     asr_settings: AsrSettings | None = None,
+    push_manager: PushManager | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     cli = cli or OttyCLI()
     asr_settings = asr_settings or AsrSettings.from_env()
+    push_manager = push_manager or PushManager()
     screens = Screens(cli)
     # tab_id -> command, for tabs this server launched whose agent hooks have not
     # reported yet. Pruned when the agent registers or the tab disappears.
@@ -272,6 +275,7 @@ def create_app(
     mount_pwa(app)
     app.state.screens = screens
     app.state.cli = cli
+    app.state.push = push_manager
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -343,7 +347,10 @@ def create_app(
         alive = {t["id"] for t in tabs}
         for tab_id in [t for t in launched if t not in alive]:
             del launched[tab_id]
-        return TabList(tabs=[tab_model(t, panes) for t in tabs])
+        models = [tab_model(t, panes) for t in tabs]
+        if push_manager.has_subscriptions:
+            await push_manager.observe_tabs(models, cli=cli)
+        return TabList(tabs=models)
 
     @api.post("/api/v1/tabs", response_model=Tab, status_code=201, tags=["Tabs"])
     async def open_tab(body: StartTab):
@@ -548,6 +555,41 @@ def create_app(
     async def speech_to_text(body: AsrRequest):
         """Hold-to-talk voice input: transcribe a short recording to text."""
         return await transcribe(asr_settings, body)
+
+    @api.get("/api/v1/push/status", response_model=PushStatusOut, tags=["Push"])
+    async def push_status():
+        """Return VAPID public key and whether Web Push notifications are enabled."""
+        return push_manager.status()
+
+    @api.post("/api/v1/push/subscribe", response_model=PushStatusOut, tags=["Push"])
+    async def push_subscribe(body: PushSubscriptionIn):
+        """Register or update a Web Push subscription for busy->idle tab notifications."""
+        res = push_manager.subscribe(body)
+        try:
+            tabs, panes = await asyncio.gather(
+                cli.call("tab", "list"), cli.call("pane", "list")
+            )
+            await push_manager.observe_tabs([tab_model(t, panes) for t in tabs], cli=cli)
+        except Exception:
+            pass
+        return res
+
+    @api.post("/api/v1/push/unsubscribe", response_model=PushStatusOut, tags=["Push"])
+    async def push_unsubscribe(body: PushUnsubscribeIn | None = None):
+        """Remove a Web Push subscription (or clear all when endpoint is omitted)."""
+        return push_manager.unsubscribe(body.endpoint if body else None)
+
+    @api.post("/api/v1/push/test", tags=["Push"])
+    async def push_test():
+        """Send a test notification to all registered Web Push subscriptions."""
+        if not push_manager.has_subscriptions:
+            raise HTTPException(409, "尚未开启消息推送通知，请先在设置中开启")
+        sent = await push_manager.send_notification(
+            title="🔔 Otty 消息通知已开启",
+            body="当任意 Agent 会话从忙碌变为空闲（或等待确认）时，你将收到通知。",
+            tag="otty-push-test",
+        )
+        return {"status": "ok", "sent": sent}
 
     app.include_router(api)
     return app

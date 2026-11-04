@@ -12,7 +12,7 @@
   <link rel="manifest" href="/otty/manifest.json" />
   <link rel="icon" type="image/svg+xml" href="/otty/icon.svg" />
   <link rel="apple-touch-icon" href="/otty/icon.svg" />
-  <link rel="stylesheet" href="/otty/styles.css?v=12" />
+  <link rel="stylesheet" href="/otty/styles.css?v=13" />
 </head>
 <body>
   <div id="app">
@@ -214,6 +214,12 @@
             <button type="button" id="btn-close-tab" class="seg-btn danger-text">关闭当前 Tab</button>
           </div>
 
+          <label class="field-label">消息推送（Agent 忙碌转空闲时提醒）</label>
+          <div class="seg-group">
+            <button type="button" id="btn-push-toggle" class="seg-btn">🔕 开启空闲通知</button>
+            <button type="button" id="btn-push-test" class="seg-btn">📨 发送测试通知</button>
+          </div>
+
           <label class="field-label">终端字号</label>
           <div class="seg-group" id="fontsize-group">
             <button type="button" class="seg-btn" data-size="11">紧凑 (11px)</button>
@@ -239,6 +245,6 @@
     </div>
   </div>
 
-  <script type="module" src="/otty/app.js?v=12"></script>
+  <script type="module" src="/otty/app.js?v=13"></script>
 </body>
 </html>

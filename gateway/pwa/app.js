@@ -95,6 +95,8 @@ const el = {
   modalSettings: document.getElementById("modal-settings"),
   btnWrap: document.getElementById("btn-wrap"),
   btnCloseTab: document.getElementById("btn-close-tab"),
+  btnPushToggle: document.getElementById("btn-push-toggle"),
+  btnPushTest: document.getElementById("btn-push-test"),
   fontsizeGroup: document.getElementById("fontsize-group"),
   inputToken: document.getElementById("input-token"),
   inputInstance: document.getElementById("input-instance"),
@@ -808,7 +810,124 @@ function openSettingsModal() {
   el.inputToken.value = state.token;
   el.inputInstance.value = state.instanceId;
   applyDisplayPrefs();
+  refreshPushUiState();
   el.modalSettings.classList.remove("hidden");
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+let pushSubscribed = false;
+
+async function refreshPushUiState() {
+  if (!el.btnPushToggle) return;
+  let localSub = null;
+  if ("serviceWorker" in navigator && "PushManager" in window) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg && reg.pushManager) {
+        localSub = await reg.pushManager.getSubscription();
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  let serverEnabled = false;
+  if (state.token) {
+    try {
+      const st = await apiRequest("/push/status");
+      serverEnabled = Boolean(st?.enabled);
+    } catch {
+      // Ignore
+    }
+  }
+  pushSubscribed = Boolean(localSub && serverEnabled);
+  el.btnPushToggle.classList.toggle("active", pushSubscribed);
+  el.btnPushToggle.textContent = pushSubscribed ? "🔔 已开启空闲通知" : "🔕 开启空闲通知";
+}
+
+async function togglePushNotifications() {
+  if (!state.token) {
+    showToast("请先配置并保存实例 Token", true);
+    return;
+  }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    showToast("iOS 请先点底部分享 →「添加到主屏幕」，从桌面图标打开即可开启通知", true);
+    return;
+  }
+  el.btnPushToggle.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+    if (pushSubscribed && existing) {
+      const ep = existing.endpoint;
+      await existing.unsubscribe().catch(() => {});
+      await apiRequest("/push/unsubscribe", { method: "POST", body: { endpoint: ep } });
+      pushSubscribed = false;
+      el.btnPushToggle.classList.remove("active");
+      el.btnPushToggle.textContent = "🔕 开启空闲通知";
+      showToast("已关闭空闲消息推送");
+      return;
+    }
+
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      showToast("未授予通知权限，请在系统设置中允许通知", true);
+      return;
+    }
+
+    const st = await apiRequest("/push/status");
+    if (!st?.publicKey) {
+      throw new Error("未获取到服务端 VAPID 公钥");
+    }
+    if (existing) {
+      await existing.unsubscribe().catch(() => {});
+    }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(st.publicKey),
+    });
+    await apiRequest("/push/subscribe", {
+      method: "POST",
+      body: sub.toJSON(),
+    });
+    pushSubscribed = true;
+    el.btnPushToggle.classList.add("active");
+    el.btnPushToggle.textContent = "🔔 已开启空闲通知";
+    showToast("✅ 已开启！Agent 从忙碌变为空闲时将推送通知");
+  } catch (err) {
+    showToast(`开启通知失败：${err.message}`, true);
+  } finally {
+    el.btnPushToggle.disabled = false;
+  }
+}
+
+async function sendTestPushNotification() {
+  if (!state.token) {
+    showToast("请先配置 Token", true);
+    return;
+  }
+  if (!pushSubscribed) {
+    showToast("请先点击左侧「开启空闲通知」", true);
+    return;
+  }
+  el.btnPushTest.disabled = true;
+  try {
+    await apiRequest("/push/test", { method: "POST", body: {} });
+    showToast("已发送测试通知");
+  } catch (err) {
+    showToast(`发送测试通知失败：${err.message}`, true);
+  } finally {
+    el.btnPushTest.disabled = false;
+  }
 }
 
 function openNewTabModal() {
@@ -932,6 +1051,13 @@ el.btnRefresh.addEventListener("click", () => {
 el.btnCloseTab.addEventListener("click", () => {
   closeTabById(currentTab());
 });
+
+if (el.btnPushToggle) {
+  el.btnPushToggle.addEventListener("click", togglePushNotifications);
+}
+if (el.btnPushTest) {
+  el.btnPushTest.addEventListener("click", sendTestPushNotification);
+}
 
 el.btnLoadMore.addEventListener("click", loadMoreHistory);
 
@@ -1438,6 +1564,11 @@ if ("serviceWorker" in navigator) {
     .register("/otty/sw.js")
     .then((reg) => reg.update())
     .catch(() => {});
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "otty_select_tab" && event.data.tab_id) {
+      selectTab(event.data.tab_id);
+    }
+  });
   if ("caches" in window) {
     caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
   }
@@ -1445,6 +1576,10 @@ if ("serviceWorker" in navigator) {
 
 // Init
 importHashCredentials();
+const urlTab = new URLSearchParams(location.search).get("tab");
+if (urlTab) {
+  state.activeTabId = urlTab;
+}
 applyDisplayPrefs();
 renderTabs();
 renderScreen();
