@@ -591,6 +591,8 @@ def create_app(
             body="当任意 Agent 会话从忙碌变为空闲（或等待确认）时，你将收到通知。",
             tag="otty-push-test",
         )
+        if sent <= 0:
+            raise HTTPException(502, "推送服务器未接受请求，请重新开启空闲通知后再试")
         return {"status": "ok", "sent": sent}
 
     app.include_router(api)

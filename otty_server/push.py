@@ -87,7 +87,9 @@ class VapidKeyPair:
             "public_key": self.public_key_b64,
         }
 
-    def sign_vapid_jwt(self, endpoint: str, subject: str = "mailto:otty@localhost") -> str:
+    def sign_vapid_jwt(
+        self, endpoint: str, subject: str = "mailto:admin@otty.app"
+    ) -> str:
         parsed = urlparse(endpoint)
         aud = f"{parsed.scheme}://{parsed.netloc}"
         header = {"typ": "JWT", "alg": "ES256"}
