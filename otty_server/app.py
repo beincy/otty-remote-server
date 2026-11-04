@@ -296,6 +296,8 @@ def create_app(
         registered = bool(agent)
         if registered:
             launched.pop(tab["id"], None)
+            if not state or state == "unknown":
+                state = "idle"
         elif tab["id"] in launched:
             agent, state = launched[tab["id"]], "starting"
         protected = any(p.get("id") == settings.host_pane_id for p in own)

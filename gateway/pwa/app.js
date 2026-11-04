@@ -409,7 +409,9 @@ function renderTabs() {
 
     const statusPill = document.createElement("span");
     statusPill.className = "task-status-pill";
-    statusPill.textContent = STATE_TEXT[tab.agent_state] || (tab.protected ? "宿主" : "终端");
+    const tabEffectiveState = tab.agent_state || (tab.agent ? "idle" : "");
+    statusPill.textContent =
+      STATE_TEXT[tabEffectiveState] || (tab.protected ? "宿主" : "终端");
     right.appendChild(statusPill);
 
     if (!tab.protected) {
@@ -442,14 +444,16 @@ function renderTabs() {
     return;
   }
 
-  el.activeStateDot.className = `state-dot ${active.agent_state || ""}`;
+  const activeEffectiveState = active.agent_state || (active.agent ? "idle" : "");
+  el.activeStateDot.className = `state-dot ${activeEffectiveState}`;
   el.activeTitle.textContent = tabDisplayName(active);
   const shortDir = window.innerWidth >= 768
     ? active.cwd || ""
     : active.cwd
       ? active.cwd.split("/").pop()
       : "";
-  const stateLabel = STATE_TEXT[active.agent_state] || (active.protected ? "宿主保护" : "终端");
+  const stateLabel =
+    STATE_TEXT[activeEffectiveState] || (active.protected ? "宿主保护" : "终端");
   el.activeSubtitle.textContent = [active.agent || "Shell", shortDir, stateLabel]
     .filter(Boolean)
     .join(" · ");
