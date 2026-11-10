@@ -1,11 +1,19 @@
 {
   "name": "otty-gateway-cf",
   "private": true,
-  "version": "0.3.0",
+  "type": "module",
+  "version": "0.4.0",
+  "engines": { "node": ">=22" },
   "scripts": {
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "node --test tests/*.test.js",
+    "test:runtime": "node tests/runtime-smoke.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^3.25.76"
   }
 }

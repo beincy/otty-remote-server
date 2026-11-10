@@ -152,6 +152,7 @@ class StartTab(BaseModel):
 
 
 class Message(BaseModel):
+    expected_pane_id: str | None = Field(default=None, pattern=r"^p_[A-Za-z0-9_-]+$")
     text: str = Field(min_length=1, max_length=32768)
     delivery: Literal["queue", "now"] = Field(
         default="queue",
@@ -167,6 +168,7 @@ class Message(BaseModel):
 
 
 class Keys(BaseModel):
+    expected_pane_id: str | None = Field(default=None, pattern=r"^p_[A-Za-z0-9_-]+$")
     keys: list[str] = Field(
         min_length=1,
         max_length=20,
@@ -320,7 +322,9 @@ def create_app(
             raise HTTPException(404, "Tab not found; use its complete ID")
         return tab_model(data, await cli.call("pane", "list", "--tab", tab_id))
 
-    def ensure_writable(tab: Tab):
+    def ensure_writable(tab: Tab, expected_pane_id: str | None = None):
+        if expected_pane_id is not None and tab.pane_id != expected_pane_id:
+            raise HTTPException(409, "Active pane changed; inspect the tab before retrying")
         if tab.protected:
             raise HTTPException(409, "This tab runs the server itself and is protected")
         if not tab.pane_id:
@@ -339,6 +343,7 @@ def create_app(
             "status": "ok",
             "host_pane_id": host["id"],
             "allow_shell_input": settings.allow_shell_input,
+            "capabilities": {"expected_pane_id": True},
         }
 
     @api.get("/api/v1/tabs", response_model=TabList, tags=["Tabs"])
@@ -411,7 +416,7 @@ def create_app(
     async def send_message(tab_id: TabId, body: Message):
         async with writes:
             tab = await get_tab(tab_id)
-            ensure_writable(tab)
+            ensure_writable(tab, body.expected_pane_id)
             if tab.agent_state == "awaiting":
                 # A queued message would wait behind the question forever, and
                 # `now` refuses to type into it. The human must answer first.
@@ -449,7 +454,7 @@ def create_app(
     async def send_keys(tab_id: TabId, body: Keys):
         async with writes:
             tab = await get_tab(tab_id)
-            ensure_writable(tab)
+            ensure_writable(tab, body.expected_pane_id)
             receipt = None
             normal_parts: list[str] = []
             for k in body.keys:

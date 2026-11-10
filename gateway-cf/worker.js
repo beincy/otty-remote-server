@@ -1,3 +1,7 @@
+import { routeMcp } from "./mcp.js";
+import { registry, internalRequest, mcpPermission, groupsSchema } from "./mcp-registry.js";
+export { OttyMcpRegistry } from "./mcp-registry.js";
+
 const MIN_SECRET_LENGTH = 16;
 const STATIC_FILES = new Set([
   "/index.html",
@@ -194,6 +198,9 @@ export class OttyInstanceHub {
     this.lastTabs = null;
     this.subscribers = new Set();
     this.pending = new Map();
+    this.mcpConfig = null;
+    this.mcpKeys = new Set();
+    this.connectionId = null;
   }
 
   broadcast(payload) {
@@ -215,7 +222,7 @@ export class OttyInstanceHub {
     this.pending.clear();
   }
 
-  forwardToAgent(method, path, query = "", body = null) {
+  forwardToAgent(method, path, query = "", body = null, source = null) {
     if (!this.agentWs) {
       return Promise.resolve({
         status: 503,
@@ -244,6 +251,7 @@ export class OttyInstanceHub {
             path,
             query,
             body,
+            ...(source ? { source } : {}),
           })
         );
       } catch {
@@ -291,6 +299,10 @@ export class OttyInstanceHub {
     server.accept();
 
     this.agentWs = server;
+    this.connectionId = crypto.randomUUID();
+    this.mcpKeys = new Set();
+    // New connection must explicitly configure MCP; never inherit old grants.
+    this.mcpConfig = { enabled: false };
     this.instanceId = instanceId;
     this.tokenHash = tokenHash;
 
@@ -307,7 +319,8 @@ export class OttyInstanceHub {
       instance_id: instanceId,
     });
 
-    server.addEventListener("message", (event) => {
+    server.addEventListener("message", async (event) => {
+      if (this.agentWs !== server) return;
       try {
         const msg = JSON.parse(
           typeof event.data === "string"
@@ -315,7 +328,10 @@ export class OttyInstanceHub {
             : new TextDecoder().decode(event.data)
         );
         if (!msg || typeof msg !== "object") return;
-        if (msg.type === "response") {
+        if (msg.type === "mcp.configure") {
+          const groups = await this.configureMcp(msg);
+          if (this.agentWs === server) server.send(JSON.stringify({ type: "mcp.configured", enabled: this.mcpConfig.enabled, groups }));
+        } else if (msg.type === "response") {
           const entry = this.pending.get(String(msg.id || ""));
           if (entry) {
             clearTimeout(entry.timer);
@@ -345,6 +361,11 @@ export class OttyInstanceHub {
     const onDisconnect = () => {
       if (this.agentWs === server) {
         this.agentWs = null;
+        this.mcpConfig = { enabled: false };
+        const unsubscribe = registry(this.env).fetch(internalRequest("mcp-unsubscribe", {
+          instance_hash: this.tokenHash, connection_id: this.connectionId,
+        })).catch(() => {});
+        this.ctx.waitUntil(unsubscribe);
         this.rejectAllPending("Local Otty server disconnected");
         this.broadcast({
           type: "event",
@@ -454,10 +475,50 @@ export class OttyInstanceHub {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  async configureMcp(msg) {
+    this.mcpConfig = { enabled: false };
+    if (msg.version !== 2 || typeof msg.enabled !== "boolean" || !Array.isArray(msg.permissions) ||
+        !msg.permissions.includes("read") || msg.permissions.some((p) => !["read", "control", "manage"].includes(p))) {
+      return {};
+    }
+    const groups = groupsSchema.parse(msg.groups);
+    this.mcpKeys = new Set(Object.keys(groups));
+    const session = this.connectionId;
+    const result = await registry(this.env).fetch(internalRequest("mcp-publish", {
+      instance_hash: this.tokenHash, connection_id: session, groups,
+    }));
+    if (!result.ok) throw new Error("Cannot synchronize MCP routes");
+    const latest = await result.json();
+    if (this.connectionId === session) this.mcpConfig = { enabled: msg.enabled, permissions: msg.permissions };
+    return latest.groups;
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const cors = buildCorsHeaders(request, this.env);
     const mode = request.headers.get("X-Otty-Mode");
+    if (mode === "mcp-info") {
+      return jsonResponse({ online: !!this.agentWs, instance_id: this.instanceId,
+        mcp_enabled: !!this.mcpConfig?.enabled, permissions: this.mcpConfig?.permissions || [] });
+    }
+    if (mode === "mcp-sync") {
+      const body = await request.json();
+      if (this.agentWs && body.connection_id === this.connectionId) {
+        const groups = Object.fromEntries(Object.entries(body.groups).filter(([key]) => this.mcpKeys.has(key)));
+        this.agentWs.send(JSON.stringify({ type: "mcp.groups.updated", groups }));
+      }
+      return jsonResponse({ ok: true });
+    }
+    if (mode === "mcp-api") {
+      const body = await request.json();
+      if (!this.agentWs) return jsonResponse({ detail: "Instance offline" }, 503);
+      const permission = mcpPermission(body.method, body.path);
+      if (!this.mcpConfig?.enabled || !permission || !this.mcpConfig.permissions.includes(permission)) {
+        return jsonResponse({ detail: "MCP operation denied by local host permissions" }, 403);
+      }
+      const result = await this.forwardToAgent(body.method, body.path, body.query || "", body.body ?? null, "mcp");
+      return jsonResponse(result.body, result.status);
+    }
     const tokenHash = request.headers.get("X-Otty-Token-Hash") || "";
     const requestedInstanceId =
       request.headers.get("X-Otty-Instance-Id") ||
@@ -538,6 +599,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const cors = buildCorsHeaders(request, env);
+
+    // MCP has its own credentials and strict Origin policy, including preflight.
+    if (normalizePath(url.pathname) === "/mcp") return routeMcp(request, env);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });

@@ -14,6 +14,7 @@ import websockets
 from fastapi import FastAPI
 
 from .gateway import MIN_SECRET_LENGTH, default_instance_id
+from .mcp import McpRoutes
 
 logger = logging.getLogger("otty_server.tunnel")
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "otty-server" / "instance.json"
@@ -107,7 +108,9 @@ def build_agent_ws_url(
         params["instance_id"] = instance_id
 
     query = urlencode(params) if params else parsed.query
-    return urlunparse(parsed._replace(scheme=scheme_map[parsed.scheme], path=path, query=query))
+    return urlunparse(
+        parsed._replace(scheme=scheme_map[parsed.scheme], path=path, query=query)
+    )
 
 
 class TunnelClient:
@@ -122,6 +125,7 @@ class TunnelClient:
         token: str,
         instance_id: str | None = None,
         push_interval: float = 2.0,
+        mcp_routes: McpRoutes | None = None,
     ):
         if len(register_key.strip()) < MIN_SECRET_LENGTH:
             raise ValueError(
@@ -133,6 +137,7 @@ class TunnelClient:
         self.token = token.strip()
         self.instance_id = (instance_id or default_instance_id(self.token)).strip()
         self.push_interval = push_interval
+        self.mcp_routes = mcp_routes
         # 注意：先赋值 register_key / token / instance_id，再拼包含 query 参数的 ws_url，
         # 兜底解决 cpolar / 反代在 WebSocket Upgrade 握手时丢弃自定义 Header 的问题
         self.ws_url = build_agent_ws_url(
@@ -158,7 +163,13 @@ class TunnelClient:
         path: str,
         query: str = "",
         body: Any = None,
+        *,
+        mcp: bool = False,
     ) -> tuple[int, Any]:
+        if mcp and (
+            self.mcp_routes is None or not self.mcp_routes.allows(method, path)
+        ):
+            return 403, {"detail": "MCP operation denied by local host permissions"}
         url = path if not query else f"{path}?{query}"
         response = await client.request(
             method,
@@ -189,6 +200,10 @@ class TunnelClient:
         tasks: set[asyncio.Task] = set()
         self._last_tabs_snapshot = None
 
+        last_mcp = self.mcp_routes.registration() if self.mcp_routes else None
+        if last_mcp is not None:
+            await send_json(last_mcp)
+
         async with httpx.AsyncClient(
             transport=transport, base_url="http://otty.local", timeout=75.0
         ) as client:
@@ -201,6 +216,7 @@ class TunnelClient:
                     str(msg.get("path", "/api/v1/tabs")),
                     str(msg.get("query", "")),
                     msg.get("body"),
+                    mcp=msg.get("source") == "mcp",
                 )
                 await send_json(
                     {
@@ -216,8 +232,20 @@ class TunnelClient:
                         await send_json(event)
 
             async def watch_tabs():
+                nonlocal last_mcp
                 while True:
                     await asyncio.sleep(self.push_interval)
+                    if self.mcp_routes is not None:
+                        try:
+                            self.mcp_routes.reload()
+                            registration = self.mcp_routes.registration()
+                            if registration != last_mcp:
+                                await send_json(registration)
+                                last_mcp = registration
+                        except OSError, ValueError, TypeError, KeyError:
+                            logger.error(
+                                "Cannot reload MCP routes; check the local routes file"
+                            )
                     push_mgr = getattr(self.app.state, "push", None)
                     has_push = bool(push_mgr and push_mgr.has_subscriptions)
                     # 若既没有在线浏览器订阅，也没有开启后台 Web Push 通知，则不轮询 Otty
@@ -241,6 +269,16 @@ class TunnelClient:
                         task = asyncio.create_task(handle_request(msg))
                         tasks.add(task)
                         task.add_done_callback(tasks.discard)
+                    elif kind in ("mcp.configured", "mcp.groups.updated"):
+                        if self.mcp_routes is not None and isinstance(
+                            msg.get("groups"), dict
+                        ):
+                            try:
+                                self.mcp_routes.merge(msg["groups"])
+                            except OSError, ValueError, TypeError, KeyError:
+                                logger.error(
+                                    "Cannot save synchronized MCP routes; check the local routes file"
+                                )
                     elif kind in ("registered", "subscribers"):
                         self.subscribers = int(
                             msg.get("subscribers", msg.get("count", 0))

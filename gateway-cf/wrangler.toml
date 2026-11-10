@@ -12,16 +12,29 @@ binding = "ASSETS"
 name = "OTTY_HUB"
 class_name = "OttyInstanceHub"
 
+[[durable_objects.bindings]]
+name = "OTTY_MCP"
+class_name = "OttyMcpRegistry"
+
 # Cloudflare 免费版（Free Plan）必须使用 new_sqlite_classes
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["OttyInstanceHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["OttyMcpRegistry"]
 
 [vars]
 # 注册密钥（至少 16 位），本地运行 main.py 时需设置相同的 OTTY_GATEWAY_REGISTER_KEY
 OTTY_GATEWAY_REGISTER_KEY = "otty-local-gateway-reg-key-2026"
 # 可选：跨域白名单（逗号分隔，留空允许同源或任意 Origin）
 OTTY_GATEWAY_CORS_ORIGINS = ""
+# MCP 单独检查 Origin：默认只接受无 Origin 的客户端及同源请求。
+# 浏览器客户端可在此填写精确 Origin（逗号分隔，不支持 *）。
+OTTY_MCP_ALLOWED_ORIGINS = ""
+# main.py 通过现有隧道同步本地 MCP 组路由表，OTTY_MCP SQLite DO 持久化。
+# 无需配置额外 MCP Secret。组权限由 Gateway 校验，本地权限上限仍由 Server 校验。
 # 语音输入（按住说话）使用的阿里云百炼 ASR 模型与专属请求地址
 OTTY_ASR_MODEL = "qwen-audio-3.1-asr-flash"
 OTTY_ASR_ENDPOINT = "https://llm-6b7p48qstpbrqpqn.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"

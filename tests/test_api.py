@@ -126,6 +126,33 @@ def writes(cli):
 
 
 @pytest.mark.parametrize(
+    "endpoint,body",
+    [
+        ("messages", {"text": "hello"}),
+        ("keys", {"keys": ["Enter"]}),
+    ],
+)
+def test_input_expected_pane_checked_before_writing(setup, endpoint, body):
+    client, cli, _ = setup
+    capabilities = client.get("/api/v1/health", headers=AUTH).json()["capabilities"]
+    assert capabilities["expected_pane_id"]
+    response = client.post(
+        f"/api/v1/tabs/t_agent/{endpoint}",
+        headers=AUTH,
+        json={**body, "expected_pane_id": "p_split"},
+    )
+    assert response.status_code == 409
+    assert writes(cli) == []
+    response = client.post(
+        f"/api/v1/tabs/t_agent/{endpoint}",
+        headers=AUTH,
+        json={**body, "expected_pane_id": "p_agent"},
+    )
+    assert response.status_code == 200
+    assert len(writes(cli)) == 1
+
+
+@pytest.mark.parametrize(
     "path,method",
     [
         ("/api/v1/health", "GET"),

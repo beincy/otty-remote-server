@@ -56,12 +56,20 @@ Gateway WS  : wss://你的gateway域名/ws/agent
 PWA Client  : https://你的gateway域名/#token=otty_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Client HTTP : https://你的gateway域名/api/v1/tabs
             : https://你的gateway域名/i/inst_8f3a1c9e2b10/api/v1/tabs
+MCP URL     : https://你的gateway域名/mcp
+MCP Routes  : /Users/you/.config/otty-server/mcp-groups.json
+MCP Key     : otty_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+MCP Access  : read,control,manage
 ===================
 ```
 
 - 直接在手机浏览器打开上面打印的 `PWA Client` 链接，会自动保存 Token 并擦除地址栏后缀；随后在 Safari / Chrome 点 **「分享 → 添加到主屏幕」**，从桌面图标打开即可进入 **无顶底浏览器栏、防误触退回的 100% 全屏独立 App 模式**（模块位于 `client/pwa/`）。
 - 如需同时开启本机 HTTP 端口方便局域网调试，加上 `--listen`（或设置 `OTTY_SERVER_LISTEN=1`）。
 - 如不设置 `OTTY_GATEWAY_URL`，默认退化为纯本地 HTTP 监听（`http://127.0.0.1:8000`），同样直接内置了 PWA 界面。
+- 使用更新后的 Cloudflare Gateway 时，MCP 默认开启，复用实例 Token 建立默认单实例组，不再生成额外本地 MCP Token。
+  Server 同步本地组路由表，Gateway 按 key 和时间戳保存最新版本并回推订阅者；同一个组可包含多个实例。
+  在本地 `.env` 设置 `OTTY_MCP_ENABLED=0` 后重启可关闭本实例 MCP，设置 `OTTY_MCP_PERMISSIONS=read` 可限制本地 MCP 为只读。
+  MCP 继续复用现有隧道；Python Gateway 和纯本地 HTTP 模式暂不提供 MCP。详见 [MCP 接入说明](gateway-cf/README.md)。
 
 | 环境变量 | 作用 |
 | --- | --- |
@@ -71,6 +79,9 @@ Client HTTP : https://你的gateway域名/api/v1/tabs
 | `OTTY_INSTANCE_ID` | 可选；自定义实例 ID（默认由 Token 派生 `inst_…`） |
 | `OTTY_SERVER_LISTEN` | 设为 `1`（或传 `--listen`）时，连接 Gateway 的同时开启本地 HTTP 监听 |
 | `OTTY_SERVER_ALLOW_SHELL_INPUT` | 设为 `1` 才允许向**普通 Shell Tab** 发消息 / 按键，默认关闭 |
+| `OTTY_MCP_ENABLED` | 连接 gateway-cf 时 MCP 默认开启；设为 `0` 后重启可关闭该实例全部 MCP 访问 |
+| `OTTY_MCP_PERMISSIONS` | 本地 MCP 权限上限，默认 `read,control,manage`；可设为 `read`，必须包含 `read` |
+| `OTTY_MCP_ROUTES_FILE` | 本地组路由表文件，默认位于实例凭证同目录下的 `mcp-groups.json` |
 | `OTTY_GATEWAY_CORS_ORIGINS` | Gateway 允许的 H5 跨域来源，多个用逗号分隔 |
 
 ---

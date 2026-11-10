@@ -3,10 +3,12 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import uvicorn
 
 from otty_server.app import TRUTHY, Settings, create_app
+from otty_server.mcp import McpRoutes
 from otty_server.tunnel import TunnelClient, load_or_create_credentials
 
 
@@ -81,12 +83,14 @@ async def run(args: argparse.Namespace):
     tasks: list[asyncio.Task] = []
     gateway_url = args.gateway.strip()
     if gateway_url:
+        mcp = McpRoutes(creds)
         tunnel = TunnelClient(
             app,
             gateway_url=gateway_url,
             register_key=args.register_key,
             token=creds.token,
             instance_id=creds.instance_id,
+            mcp_routes=mcp,
         )
         print(f"Gateway WS  : {tunnel.ws_url}")
         print(f"PWA Client  : {gateway_url.rstrip('/')}/#token={creds.token}")
@@ -94,6 +98,24 @@ async def run(args: argparse.Namespace):
         print(
             f"            : {gateway_url.rstrip('/')}/i/{creds.instance_id}/api/v1/tabs"
         )
+        if mcp.enabled:
+            ws = urlsplit(tunnel.ws_url)
+            mcp_url = urlunsplit(
+                (
+                    "https" if ws.scheme == "wss" else "http",
+                    ws.netloc,
+                    ws.path.removesuffix("/ws/agent") + "/mcp",
+                    "",
+                    "",
+                )
+            )
+            print(f"MCP URL     : {mcp_url}")
+            print(f"MCP Routes  : {mcp.path}")
+            for key in mcp.groups:
+                print(f"MCP Key     : {key}")
+            print(f"MCP Access  : {','.join(mcp.permissions)}")
+        else:
+            print("MCP         : disabled (OTTY_MCP_ENABLED)")
         tasks.append(asyncio.create_task(tunnel.serve_forever()))
 
     if args.listen or not gateway_url:
