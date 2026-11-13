@@ -14,10 +14,17 @@ services:
       OTTY_GATEWAY_REGISTER_KEY: "${OTTY_GATEWAY_REGISTER_KEY:-otty-local-gateway-reg-key-2026}"
       # 可选：自定义跨域白名单（逗号分隔）
       OTTY_GATEWAY_CORS_ORIGINS: "${OTTY_GATEWAY_CORS_ORIGINS:-}"
+      # MCP：浏览器客户端的精确 Origin 白名单（逗号分隔，不支持 *）
+      OTTY_MCP_ALLOWED_ORIGINS: "${OTTY_MCP_ALLOWED_ORIGINS:-}"
+      # MCP 组路由 / 订阅 / 写回执的持久化文件（重启后仍保留，对应 CF 版 DO SQLite）
+      OTTY_GATEWAY_MCP_STORE: "${OTTY_GATEWAY_MCP_STORE:-/data/gateway-mcp.json}"
       # 语音输入（按住说话）：阿里云百炼 API Key，留空则转发给本地 Otty Server 识别
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       OTTY_ASR_MODEL: "${OTTY_ASR_MODEL:-qwen-audio-3.1-asr-flash}"
       OTTY_ASR_ENDPOINT: "${OTTY_ASR_ENDPOINT:-https://llm-6b7p48qstpbrqpqn.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation}"
+    volumes:
+      # 持久化 MCP 注册表（可用 OTTY_GATEWAY_DATA_DIR 改路径）
+      - "${OTTY_GATEWAY_DATA_DIR:-./data}:/data"
     healthcheck:
       test:
         [

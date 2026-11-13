@@ -34,6 +34,7 @@ uv run python -m gateway
 
 - 公网入口请配合 HTTPS / WSS 反向代理（如 Nginx / Caddy）。
 - Gateway 内存中只保存实例 Token 的 SHA-256 摘要，不落盘明文 Token。
+- MCP 组路由 / 订阅 / 写回执默认保存在内存；设置 `OTTY_GATEWAY_MCP_STORE=<路径>` 后持久化到磁盘（docker-compose 已默认开启），重启不丢失。
 
 ## 2. 启动本地 Otty Server
 
@@ -58,8 +59,6 @@ Client HTTP : https://你的gateway域名/api/v1/tabs
             : https://你的gateway域名/i/inst_8f3a1c9e2b10/api/v1/tabs
 MCP URL     : https://你的gateway域名/mcp
 MCP Routes  : /Users/you/.config/otty-server/mcp-groups.json
-MCP Key     : otty_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-MCP Access  : read,control,manage
 ===================
 ```
 
@@ -69,7 +68,7 @@ MCP Access  : read,control,manage
 - 使用更新后的 Cloudflare Gateway 时，MCP 默认开启，复用实例 Token 建立默认单实例组，不再生成额外本地 MCP Token。
   Server 同步本地组路由表，Gateway 按 key 和时间戳保存最新版本并回推订阅者；同一个组可包含多个实例。
   在本地 `.env` 设置 `OTTY_MCP_ENABLED=0` 后重启可关闭本实例 MCP，设置 `OTTY_MCP_PERMISSIONS=read` 可限制本地 MCP 为只读。
-  MCP 继续复用现有隧道；Python Gateway 和纯本地 HTTP 模式暂不提供 MCP。详见 [MCP 接入说明](gateway-cf/README.md)。
+  MCP 继续复用现有隧道；Cloudflare Gateway 和 Python Gateway（`gateway/`）均提供 MCP（组路由、权限、幂等写回执与重启持久化），纯本地 HTTP 模式暂不提供。详见 [MCP 接入说明](gateway-cf/README.md)。
 
 | 环境变量 | 作用 |
 | --- | --- |
@@ -83,6 +82,8 @@ MCP Access  : read,control,manage
 | `OTTY_MCP_PERMISSIONS` | 本地 MCP 权限上限，默认 `read,control,manage`；可设为 `read`，必须包含 `read` |
 | `OTTY_MCP_ROUTES_FILE` | 本地组路由表文件，默认位于实例凭证同目录下的 `mcp-groups.json` |
 | `OTTY_GATEWAY_CORS_ORIGINS` | Gateway 允许的 H5 跨域来源，多个用逗号分隔 |
+| `OTTY_MCP_ALLOWED_ORIGINS` | Gateway `/mcp` 允许的精确浏览器 Origin（逗号分隔，不支持 `*`；默认仅同源或无 Origin 请求） |
+| `OTTY_GATEWAY_MCP_STORE` | Python Gateway 的 MCP 组路由 / 订阅 / 写回执持久化文件路径（不设则仅存内存） |
 
 ---
 

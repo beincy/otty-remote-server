@@ -111,9 +111,6 @@ async def run(args: argparse.Namespace):
             )
             print(f"MCP URL     : {mcp_url}")
             print(f"MCP Routes  : {mcp.path}")
-            for key in mcp.groups:
-                print(f"MCP Key     : {key}")
-            print(f"MCP Access  : {','.join(mcp.permissions)}")
         else:
             print("MCP         : disabled (OTTY_MCP_ENABLED)")
         tasks.append(asyncio.create_task(tunnel.serve_forever()))

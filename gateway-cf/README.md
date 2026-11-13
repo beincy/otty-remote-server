@@ -49,7 +49,7 @@ Worker 未配置 `DASHSCOPE_API_KEY` 时，请求会转发给本地 Otty Server�
 
 MCP 地址为 `https://你的Gateway域名/mcp`，使用 Streamable HTTP，无需新增端口或 Server → Gateway 连接。
 使用 Node.js 22+，在 `gateway-cf` 执行 `npm ci`、`npm run deploy`，并重启更新后的本地 `main.py`。
-本功能由 Cloudflare Gateway 提供，Python Gateway / 纯本地 HTTP 模式暂不提供 MCP。
+本功能由 Cloudflare Gateway 提供；Python Gateway（`../gateway/`）已同步同一套逻辑（`/mcp` 端点、组路由、权限、幂等写回执，持久化见 `OTTY_GATEWAY_MCP_STORE`），纯本地 HTTP 模式暂不提供 MCP。
 
 ### 默认启动
 
@@ -61,8 +61,6 @@ Server 只保留原来的实例 Token，不生成额外的本地 MCP Token。
 ```text
 MCP URL     : https://你的Gateway域名/mcp
 MCP Routes  : /Users/you/.config/otty-server/mcp-groups.json
-MCP Key     : otty_现有实例Token
-MCP Access  : read,control,manage
 ```
 
 不再需要 `OTTY_MCP_CLIENTS` Secret 或凭证生成命令；早期版本的 `mcp-<摘要>.json` 文件不再使用。

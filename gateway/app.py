@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import secrets
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -16,15 +18,19 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.datastructures import Headers
 from starlette.routing import Mount
 
 from .asr import AsrRequest, AsrSettings, transcribe
+from .mcp_registry import PERMISSIONS, McpRegistry, digest, mcp_permission
+from .mcp_server import GroupRouter, serve_mcp
 from .pwa import mount_pwa
 
 MIN_SECRET_LENGTH = 16
@@ -43,6 +49,11 @@ def default_instance_id(token: str) -> str:
 class GatewaySettings:
     register_key: str
     cors_origins: tuple[str, ...] = ()
+    # MCP checks Origin itself and never trusts the permissive PWA CORS list.
+    mcp_allowed_origins: tuple[str, ...] = ()
+    # Where MCP group routes/subscriptions/write receipts persist across
+    # restarts (the Workers version keeps them in Durable Object SQLite).
+    mcp_store: Path | None = None
 
     def __post_init__(self):
         if len(self.register_key.strip()) < MIN_SECRET_LENGTH:
@@ -63,9 +74,15 @@ class GatewaySettings:
             or os.getenv("OTTY_SERVER_CORS_ORIGINS")
             or ""
         )
+        mcp_origins = os.getenv("OTTY_MCP_ALLOWED_ORIGINS") or ""
+        store = (os.getenv("OTTY_GATEWAY_MCP_STORE") or "").strip()
         return cls(
             register_key=key,
             cors_origins=tuple(x.strip() for x in origins.split(",") if x.strip()),
+            mcp_allowed_origins=tuple(
+                x.strip() for x in mcp_origins.split(",") if x.strip()
+            ),
+            mcp_store=Path(store).expanduser() if store else None,
         )
 
 
@@ -77,6 +94,13 @@ class InstanceSession:
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     subscribers: set[WebSocket] = field(default_factory=set)
     last_tabs: list[dict[str, Any]] | None = None
+    # Identifies one tunnel connection; stale MCP pushes after a reconnect
+    # carry an old connection_id and are ignored.
+    connection_id: str = ""
+    # Local MCP ceiling declared via mcp.configure; MCP starts disabled on
+    # every new connection and must be explicitly configured again.
+    mcp_enabled: bool = False
+    mcp_permissions: tuple[str, ...] = ()
 
     def matches_token(self, candidate: str) -> bool:
         return secrets.compare_digest(self.token_hash, token_digest(candidate))
@@ -86,18 +110,19 @@ class InstanceSession:
         for ws in list(self.subscribers):
             try:
                 await ws.send_json(payload)
-            except (OSError, RuntimeError, WebSocketDisconnect):
+            except OSError, RuntimeError, WebSocketDisconnect:
                 dead.append(ws)
         for ws in dead:
             self.subscribers.discard(ws)
 
 
 class GatewayHub:
-    def __init__(self):
+    def __init__(self, registry: McpRegistry | None = None):
         self.by_id: dict[str, InstanceSession] = {}
         self.by_token: dict[str, InstanceSession] = {}
         # Keep subscribers connected even while an instance reconnects.
         self.waiting_subscribers: dict[str, set[WebSocket]] = {}
+        self.registry = registry
 
     async def register(
         self, instance_id: str, token: str, websocket: WebSocket
@@ -117,6 +142,7 @@ class GatewayHub:
             token_hash=digest,
             websocket=websocket,
             subscribers=carried_subs,
+            connection_id=uuid.uuid4().hex,
         )
         self.by_id[instance_id] = session
         self.by_token[digest] = session
@@ -132,6 +158,10 @@ class GatewayHub:
             del self.by_id[session.instance_id]
         if self.by_token.get(session.token_hash) is session:
             del self.by_token[session.token_hash]
+        session.mcp_enabled = False
+        session.mcp_permissions = ()
+        if self.registry is not None:
+            await self.registry.unsubscribe(session.token_hash, session.connection_id)
         for fut in list(session.pending.values()):
             if not fut.done():
                 fut.set_exception(HTTPException(503, reason))
@@ -182,6 +212,7 @@ class GatewayHub:
         path: str,
         query: str = "",
         body: Any = None,
+        source: str | None = None,
     ) -> tuple[int, Any]:
         req_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
@@ -189,17 +220,19 @@ class GatewayHub:
         session.pending[req_id] = fut
         # Wait endpoint can block up to 60s; give it headroom.
         timeout = 75.0 if path.endswith(("/wait", "/asr")) else 20.0
+        frame: dict[str, Any] = {
+            "type": "request",
+            "id": req_id,
+            "method": method.upper(),
+            "path": path,
+            "query": query,
+            "body": body,
+        }
+        if source:
+            # Lets the local server apply its independent MCP permission ceiling.
+            frame["source"] = source
         try:
-            await session.websocket.send_json(
-                {
-                    "type": "request",
-                    "id": req_id,
-                    "method": method.upper(),
-                    "path": path,
-                    "query": query,
-                    "body": body,
-                }
-            )
+            await session.websocket.send_json(frame)
             reply = await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError as exc:
             raise HTTPException(
@@ -211,6 +244,75 @@ class GatewayHub:
             session.pending.pop(req_id, None)
         return int(reply.get("status", 502)), reply.get("body")
 
+    async def mcp_api(
+        self,
+        session: InstanceSession,
+        method: str,
+        path: str,
+        query: str = "",
+        body: Any = None,
+    ) -> tuple[int, Any]:
+        """Forward one MCP tool call, after the instance's own permission ceiling.
+
+        The gateway-side check is defense in depth: the local server re-checks
+        every request carrying ``source: "mcp"`` on its own.
+        """
+        permission = mcp_permission(method, path)
+        if (
+            not session.mcp_enabled
+            or permission is None
+            or permission not in session.mcp_permissions
+        ):
+            return 403, {"detail": "MCP operation denied by local host permissions"}
+        return await self.forward(session, method, path, query, body, source="mcp")
+
+    async def handle_mcp_configure(
+        self, session: InstanceSession, msg: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Process an agent's mcp.configure frame; fail closed on anything odd."""
+        session.mcp_enabled = False
+        session.mcp_permissions = ()
+        if self.registry is None:
+            return {"type": "mcp.configured", "enabled": False, "groups": {}}
+        connection_id = session.connection_id
+        try:
+            if msg.get("version") != 2 or not isinstance(msg.get("enabled"), bool):
+                raise ValueError("Invalid mcp.configure frame")
+            permissions = msg.get("permissions")
+            if (
+                not isinstance(permissions, list)
+                or not permissions
+                or "read" not in permissions
+                or any(p not in PERMISSIONS for p in permissions)
+            ):
+                raise ValueError("Invalid MCP permissions")
+            latest = await self.registry.sync(
+                session.token_hash, connection_id, msg.get("groups"), self.mcp_notify
+            )
+        except ValueError, TypeError, OSError:
+            return {"type": "mcp.configured", "enabled": False, "groups": {}}
+        if session.connection_id == connection_id:
+            # Never inherit grants across a reconnect.
+            session.mcp_enabled = bool(msg["enabled"])
+            session.mcp_permissions = tuple(dict.fromkeys(permissions))
+        return {
+            "type": "mcp.configured",
+            "enabled": session.mcp_enabled,
+            "groups": latest,
+        }
+
+    async def mcp_notify(
+        self, instance_hash: str, connection_id: str, updates: dict[str, Any]
+    ):
+        """Push merged group updates to a subscribed agent tunnel."""
+        session = self.by_token.get(instance_hash)
+        if session is None or session.connection_id != connection_id:
+            return
+        with suppress(OSError, RuntimeError, WebSocketDisconnect):
+            await session.websocket.send_json(
+                {"type": "mcp.groups.updated", "groups": updates}
+            )
+
 
 def _extract_bearer(header_value: str | None) -> str:
     if not header_value:
@@ -219,6 +321,58 @@ def _extract_bearer(header_value: str | None) -> str:
     if scheme.lower() != "bearer":
         return ""
     return credentials.strip()
+
+
+def mcp_cors_headers(
+    origin: str | None,
+    host: str,
+    scheme: str,
+    allowed: tuple[str, ...],
+) -> dict[str, str] | None:
+    """MCP has its own strict Origin policy, independent of the PWA CORS list."""
+    if origin is None:
+        return {}
+    if origin == f"{scheme}://{host}" or origin in allowed:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Vary": "Origin",
+            "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, "
+            "MCP-Protocol-Version, MCP-Session-Id",
+        }
+    return None
+
+
+class McpOriginGuard:
+    """Sits outside CORSMiddleware: a permissive PWA CORS list must never widen
+    the MCP Origin check, and MCP preflight is answered here, not by CORS."""
+
+    def __init__(self, app, allowed_origins: tuple[str, ...]):
+        self.app = app
+        self.allowed_origins = allowed_origins
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path") == "/mcp":
+            headers = Headers(scope=scope)
+            origin = headers.get("origin")
+            # Behind a TLS-terminating reverse proxy the ASGI scheme is http;
+            # trust the forwarded proto for the same-origin comparison.
+            scheme = headers.get("x-forwarded-proto") or scope.get("scheme", "http")
+            cors = mcp_cors_headers(
+                origin, headers.get("host", ""), scheme, self.allowed_origins
+            )
+            # CORS headers alone do not prevent requests; reject foreign origins.
+            if cors is None:
+                response = JSONResponse(
+                    {"error": "Origin is not allowed"}, status_code=403
+                )
+                await response(scope, receive, send)
+                return
+            if scope.get("method") == "OPTIONS":
+                response = Response(status_code=204, headers=cors)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 _bearer = HTTPBearer(auto_error=False)
@@ -241,7 +395,8 @@ def create_gateway_app(
 ) -> FastAPI:
     settings = settings or GatewaySettings.from_env()
     asr_settings = asr_settings or AsrSettings.from_env()
-    hub = GatewayHub()
+    registry = McpRegistry(settings.mcp_store)
+    hub = GatewayHub(registry)
 
     app = FastAPI(
         title="Otty Gateway",
@@ -250,6 +405,7 @@ def create_gateway_app(
     )
     mount_pwa(app)
     app.state.hub = hub
+    app.state.registry = registry
     app.state.settings = settings
     if settings.cors_origins:
         app.add_middleware(
@@ -258,6 +414,8 @@ def create_gateway_app(
             allow_methods=FORWARDED_METHODS,
             allow_headers=["Authorization", "Content-Type", "X-Instance-Id"],
         )
+    # Added last so it runs outside (before) CORSMiddleware on every request.
+    app.add_middleware(McpOriginGuard, allowed_origins=settings.mcp_allowed_origins)
 
     @app.get("/gateway/health", tags=["Gateway"])
     async def gateway_health():
@@ -317,6 +475,10 @@ def create_gateway_app(
                     )
                 elif kind == "ping":
                     await websocket.send_json({"type": "pong"})
+                elif kind == "mcp.configure":
+                    await websocket.send_json(
+                        await hub.handle_mcp_configure(session, msg)
+                    )
         except WebSocketDisconnect:
             pass
         finally:
@@ -468,6 +630,51 @@ def create_gateway_app(
         token: Annotated[str, Depends(get_token)],
     ):
         return await handle_asr(request, token, instance_id)
+
+    @app.api_route("/mcp", methods=["GET", "POST", "DELETE", "OPTIONS"], tags=["MCP"])
+    async def mcp_endpoint(request: Request) -> Response:
+        """Stateless Streamable-HTTP MCP, authenticated by an MCP group key."""
+        # The McpOriginGuard already rejected foreign origins and OPTIONS; this
+        # is defense in depth plus the CORS echo headers for real requests.
+        cors = mcp_cors_headers(
+            request.headers.get("origin"),
+            request.headers.get("host", ""),
+            request.headers.get("x-forwarded-proto") or request.url.scheme,
+            settings.mcp_allowed_origins,
+        )
+        if cors is None:
+            return JSONResponse({"error": "Origin is not allowed"}, status_code=403)
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors)
+        auth_error = JSONResponse(
+            {"error": "Invalid or missing MCP group key"},
+            status_code=401,
+            headers={**cors, "WWW-Authenticate": 'Bearer realm="otty-mcp"'},
+        )
+        key = _extract_bearer(request.headers.get("authorization"))
+        if not re.fullmatch(r"\S{16,512}", key):
+            return auth_error
+        group = registry.group(digest(key))
+        if group is None:
+            return auth_error
+        if request.method != "POST":
+            return JSONResponse(
+                {"error": "Stateless MCP supports POST only"},
+                status_code=405,
+                headers={**cors, "Allow": "POST, OPTIONS"},
+            )
+        status, payload = await serve_mcp(
+            GroupRouter(hub, group),
+            {"client_hash": digest(key), "permissions": group["permissions"]},
+            registry,
+            method=request.method,
+            body=await request.body(),
+            protocol_version=request.headers.get("mcp-protocol-version"),
+        )
+        headers = {**cors, "Cache-Control": "no-store"}
+        if payload is None:
+            return Response(status_code=status, headers=headers)
+        return JSONResponse(payload, status_code=status, headers=headers)
 
     @app.api_route(
         "/api/v1/{api_path:path}",

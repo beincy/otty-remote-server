@@ -210,8 +210,9 @@ def test_main_prints_routes_and_uses_only_existing_instance_token(
     assert tunnels[0]["mcp_routes"].enabled == enabled
     if enabled:
         assert "MCP URL     : https://example.test/sub/mcp" in output
-        assert f"MCP Key     : {TOKEN}" in output
         assert "MCP Routes" in output
+        assert "MCP Key" not in output
+        assert "MCP Access" not in output
         assert "otty_mcp_" not in output
     else:
         assert "MCP         : disabled" in output
