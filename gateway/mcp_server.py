@@ -823,7 +823,7 @@ async def serve_mcp(
         return 400, {"error": f"Unsupported MCP-Protocol-Version: {protocol_version}"}
     try:
         message = json.loads(body.decode("utf-8"))
-    except ValueError, UnicodeDecodeError:
+    except (ValueError, UnicodeDecodeError):
         return 400, rpc_error(None, *PARSE_ERROR)
     if not isinstance(message, (dict, list)):
         return 400, rpc_error(None, *INVALID_REQUEST)

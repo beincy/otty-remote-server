@@ -110,7 +110,7 @@ class InstanceSession:
         for ws in list(self.subscribers):
             try:
                 await ws.send_json(payload)
-            except OSError, RuntimeError, WebSocketDisconnect:
+            except (OSError, RuntimeError, WebSocketDisconnect):
                 dead.append(ws)
         for ws in dead:
             self.subscribers.discard(ws)
@@ -289,7 +289,7 @@ class GatewayHub:
             latest = await self.registry.sync(
                 session.token_hash, connection_id, msg.get("groups"), self.mcp_notify
             )
-        except ValueError, TypeError, OSError:
+        except (ValueError, TypeError, OSError):
             return {"type": "mcp.configured", "enabled": False, "groups": {}}
         if session.connection_id == connection_id:
             # Never inherit grants across a reconnect.

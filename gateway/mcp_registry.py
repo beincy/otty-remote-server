@@ -129,7 +129,7 @@ class McpRegistry:
                     self.subs = data["subs"]
                 if isinstance(data.get("receipts"), dict):
                     self.receipts = data["receipts"]
-            except OSError, ValueError:
+            except (OSError, ValueError):
                 # Corrupt state must not wedge the gateway; start over.
                 self.groups, self.subs, self.receipts = {}, {}, {}
 
