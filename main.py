@@ -12,6 +12,18 @@ from otty_server.mcp import McpRoutes
 from otty_server.tunnel import TunnelClient, load_or_create_credentials
 
 
+def _clean_env_value(raw: str) -> str:
+    """Trim whitespace, honor surrounding quotes, drop inline ` # comments`."""
+    value = raw.strip()
+    if value[:1] in ("'", '"'):
+        closing = value.find(value[0], 1)
+        return value[1:closing] if closing != -1 else value[1:]
+    comment = value.find(" #")
+    if comment != -1:
+        value = value[:comment]
+    return value.strip()
+
+
 def load_dotenv(dotenv_path: Path | None = None) -> None:
     path = dotenv_path or (Path(__file__).resolve().parent / ".env")
     if not path.is_file():
@@ -22,8 +34,8 @@ def load_dotenv(dotenv_path: Path | None = None) -> None:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:
+        value = _clean_env_value(value)
+        if key and value and key not in os.environ:
             os.environ[key] = value
 
 

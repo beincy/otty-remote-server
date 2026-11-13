@@ -87,6 +87,12 @@ def build_agent_ws_url(
     instance_id: str = "",
 ) -> str:
     parsed = urlparse(gateway_url.strip())
+    if parsed.fragment:
+        # Usually an inline .env comment pasted onto the URL line.
+        raise ValueError(
+            "OTTY_GATEWAY_URL must not contain '#': fragments and inline "
+            f"comments are not part of the URL, got {gateway_url!r}"
+        )
     scheme_map = {"http": "ws", "https": "wss", "ws": "ws", "wss": "wss"}
     if parsed.scheme not in scheme_map or not parsed.netloc:
         raise ValueError(
@@ -242,7 +248,7 @@ class TunnelClient:
                             if registration != last_mcp:
                                 await send_json(registration)
                                 last_mcp = registration
-                        except OSError, ValueError, TypeError, KeyError:
+                        except (OSError, ValueError, TypeError, KeyError):
                             logger.error(
                                 "Cannot reload MCP routes; check the local routes file"
                             )
@@ -275,7 +281,7 @@ class TunnelClient:
                         ):
                             try:
                                 self.mcp_routes.merge(msg["groups"])
-                            except OSError, ValueError, TypeError, KeyError:
+                            except (OSError, ValueError, TypeError, KeyError):
                                 logger.error(
                                     "Cannot save synchronized MCP routes; check the local routes file"
                                 )
