@@ -1131,7 +1131,7 @@ if (el.btnOpenOtty) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(data.url).catch(() => {});
       }
-      closeModal("modal-settings");
+      el.modalSettings.classList.add("hidden");
       window.location.href = data.url;
       showToast("已触发 Otty 跳转（链接已复制）");
     } catch (err) {
