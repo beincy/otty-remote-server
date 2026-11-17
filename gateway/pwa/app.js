@@ -1121,7 +1121,9 @@ if (el.btnOpenOtty) {
       return;
     }
     try {
-      const data = await apiRequest(`/api/v1/tabs/${encodeURIComponent(tab.id)}/link?last_command=true`);
+      const data = await apiRequest(`/tabs/${encodeURIComponent(tab.id)}/link`, {
+        params: { last_command: "true" },
+      });
       if (!data || !data.url) {
         showToast("未获取到 Otty 跳转链接");
         return;
