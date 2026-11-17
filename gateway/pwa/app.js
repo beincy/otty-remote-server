@@ -95,6 +95,7 @@ const el = {
   modalSettings: document.getElementById("modal-settings"),
   btnWrap: document.getElementById("btn-wrap"),
   btnCloseTab: document.getElementById("btn-close-tab"),
+  btnOpenOtty: document.getElementById("btn-open-otty"),
   btnPushToggle: document.getElementById("btn-push-toggle"),
   btnPushTest: document.getElementById("btn-push-test"),
   pushStatusHint: document.getElementById("push-status-hint"),
@@ -1111,6 +1112,31 @@ el.btnRefresh.addEventListener("click", () => {
 el.btnCloseTab.addEventListener("click", () => {
   closeTabById(currentTab());
 });
+
+if (el.btnOpenOtty) {
+  el.btnOpenOtty.addEventListener("click", async () => {
+    const tab = currentTab();
+    if (!tab) {
+      showToast("请先选择一个会话");
+      return;
+    }
+    try {
+      const data = await apiRequest(`/api/v1/tabs/${encodeURIComponent(tab.id)}/link?last_command=true`);
+      if (!data || !data.url) {
+        showToast("未获取到 Otty 跳转链接");
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(data.url).catch(() => {});
+      }
+      closeModal("modal-settings");
+      window.location.href = data.url;
+      showToast("已触发 Otty 跳转（链接已复制）");
+    } catch (err) {
+      showToast(`获取链接失败: ${err.message || "未知错误"}`);
+    }
+  });
+}
 
 if (el.btnPushToggle) {
   el.btnPushToggle.addEventListener("click", togglePushNotifications);

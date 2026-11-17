@@ -224,6 +224,68 @@ class Submission(BaseModel):
     receipt: dict | None = None
 
 
+class PaneLink(BaseModel):
+    tab_id: str
+    pane_id: str
+    url: str
+
+
+class ViewRequest(BaseModel):
+    target: str = Field(
+        min_length=1,
+        max_length=4096,
+        description="Absolute file path or http(s):// URL to open inside Otty",
+    )
+    mode: Literal["view", "edit"] = "view"
+    placement: Literal[
+        "new-tab", "new-window", "right", "left", "top", "bottom"
+    ] = "new-tab"
+
+    @field_validator("target")
+    @classmethod
+    def valid_target(cls, value: str) -> str:
+        if "\x00" in value or any(ch in value for ch in "\r\n"):
+            raise ValueError("Control characters are not allowed in target")
+        if value.startswith(("http://", "https://")):
+            return value
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            raise ValueError(
+                "target must be an absolute path on the Otty host or an http(s):// URL"
+            )
+        return str(path)
+
+
+class ViewResult(BaseModel):
+    target: str
+    mode: str
+    placement: str
+    result: dict | None = None
+
+
+class ExecRequest(BaseModel):
+    expected_pane_id: str | None = Field(default=None, pattern=r"^p_[A-Za-z0-9_-]+$")
+    command: str = Field(min_length=1, max_length=8192)
+    timeout_secs: int = Field(default=30, ge=1, le=120)
+
+    @field_validator("command")
+    @classmethod
+    def valid_command(cls, value: str) -> str:
+        if "\x00" in value or any(ch in value for ch in "\r\n"):
+            raise ValueError("NUL bytes and line breaks are not allowed in command")
+        if not value.strip():
+            raise ValueError("command cannot be blank")
+        return value
+
+
+class ExecResult(BaseModel):
+    tab_id: str
+    pane_id: str
+    exit_code: int = 0
+    stdout: str = ""
+    stderr: str = ""
+
+
 class WaitResult(BaseModel):
     done: bool = Field(description="false: timed out, or the agent is awaiting a human")
     tab: Tab
@@ -343,7 +405,12 @@ def create_app(
             "status": "ok",
             "host_pane_id": host["id"],
             "allow_shell_input": settings.allow_shell_input,
-            "capabilities": {"expected_pane_id": True},
+            "capabilities": {
+                "expected_pane_id": True,
+                "link": True,
+                "view": True,
+                "exec": True,
+            },
         }
 
     @api.get("/api/v1/tabs", response_model=TabList, tags=["Tabs"])
@@ -557,6 +624,87 @@ def create_app(
             done = False
         tab = await get_tab(tab_id)
         return WaitResult(done=done and tab.agent_state != "awaiting", tab=tab)
+
+    @api.get("/api/v1/tabs/{tab_id}/link", response_model=PaneLink, tags=["Tabs"])
+    async def link_tab(
+        tab_id: TabId,
+        last_command: bool = Query(default=False),
+        line: Annotated[int | None, Query(ge=1)] = None,
+    ):
+        """Return an `otty://` deeplink pointing to the tab's active pane."""
+        tab = await get_tab(tab_id)
+        if not tab.pane_id:
+            raise HTTPException(409, "The tab has no pane to link")
+        if line is not None:
+            data = await cli.call(
+                "pane", "link", "--pane", tab.pane_id, "--line", str(line)
+            )
+        elif last_command:
+            try:
+                data = await cli.call(
+                    "pane", "link", "--pane", tab.pane_id, "--last-command"
+                )
+            except OttyError as exc:
+                if exc.exit_code != 4:
+                    raise
+                data = await cli.call("pane", "link", "--pane", tab.pane_id)
+        else:
+            data = await cli.call("pane", "link", "--pane", tab.pane_id)
+        url = data.get("url", "") if isinstance(data, dict) else ""
+        if not url:
+            raise HTTPException(502, "Otty CLI did not return a pane link URL")
+        return PaneLink(tab_id=tab.id, pane_id=tab.pane_id, url=url)
+
+    @api.post("/api/v1/tabs/{tab_id}/exec", response_model=ExecResult, tags=["Tabs"])
+    async def exec_tab(tab_id: TabId, body: ExecRequest):
+        """Execute a command in a plain shell tab and return exit code, stdout and stderr."""
+        async with writes:
+            tab = await get_tab(tab_id)
+            if tab.agent:
+                raise HTTPException(
+                    409,
+                    "Cannot execute shell commands in an agent tab; send a message instead",
+                )
+            ensure_writable(tab, body.expected_pane_id)
+            data = await cli.call(
+                "pane",
+                "exec",
+                "--pane",
+                tab.pane_id,
+                "--timeout",
+                str(body.timeout_secs * 1000),
+                "--",
+                body.command,
+                timeout=body.timeout_secs + 5,
+            )
+        payload = data if isinstance(data, dict) else {}
+        exit_code = payload.get("exit_code")
+        if exit_code is None:
+            exit_code = payload.get("code", 0)
+        return ExecResult(
+            tab_id=tab.id,
+            pane_id=tab.pane_id,
+            exit_code=int(exit_code),
+            stdout=str(payload.get("stdout") or ""),
+            stderr=str(payload.get("stderr") or ""),
+        )
+
+    @api.post("/api/v1/view", response_model=ViewResult, tags=["System"])
+    async def open_view(body: ViewRequest):
+        """Open a file path or http(s):// URL in an Otty pane on the host."""
+        data = await cli.call(
+            "view",
+            f"--mode={body.mode}",
+            f"--{body.placement}",
+            "--",
+            body.target,
+        )
+        return ViewResult(
+            target=body.target,
+            mode=body.mode,
+            placement=body.placement,
+            result=data if isinstance(data, dict) else None,
+        )
 
     @api.post("/api/v1/asr", response_model=AsrResult, tags=["Voice"])
     async def speech_to_text(body: AsrRequest):

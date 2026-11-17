@@ -79,6 +79,32 @@ class FakeAgent:
                 "hasMore": False,
                 "nextBefore": None,
             }
+        if path.endswith("/link"):
+            tab = self.tabs[0] if self.tabs else {"id": "t_none", "pane_id": "p_none"}
+            return 200, {
+                "tab_id": tab["id"],
+                "pane_id": tab["pane_id"],
+                "url": f"otty://pane/{tab['pane_id']}?line=10",
+            }
+        if path.endswith("/exec"):
+            target = (
+                self.tabs[0] if self.tabs else {"id": "t_none", "pane_id": "p_none"}
+            )
+            return 200, {
+                "tab_id": target["id"],
+                "pane_id": target["pane_id"],
+                "exit_code": 0,
+                "stdout": "ok\n",
+                "stderr": "",
+            }
+        if path == "/api/v1/view":
+            body = msg.get("body") or {}
+            return 200, {
+                "target": body.get("target", ""),
+                "mode": body.get("mode", "view"),
+                "placement": body.get("placement", "new-tab"),
+                "result": {"opened": True},
+            }
         if path.endswith("/wait"):
             return 200, {"done": True, "tab": self.tabs[0] if self.tabs else {}}
         if method in ("POST", "DELETE"):
@@ -723,7 +749,7 @@ def test_official_shape_initialize_and_ping(gw_client):
         assert init["protocolVersion"] == "2025-06-18"
         assert init["serverInfo"]["name"] == "otty"
         assert "instructions" in init
-        assert len(result_of(rpc(gw_client, "tools/list"))["tools"]) == 8
+        assert len(result_of(rpc(gw_client, "tools/list"))["tools"]) == 10
         assert result_of(rpc(gw_client, "ping")) == {}
         assert rpc(gw_client, "does/not/exist").json()["error"]["code"] == -32601
     finally:
@@ -794,3 +820,73 @@ def test_registry_persists_and_merges_by_timestamp(tmp_path):
     assert "inst-hash" in second.subs
     asyncio.run(second.unsubscribe("inst-hash", "conn-1"))
     assert "inst-hash" not in second.subs
+
+
+def test_exec_command_open_view_and_inspect_link(gw_client):
+    a = FakeAgent(
+        gw_client,
+        TOKEN_A,
+        "inst_a",
+        [{"id": "t_a1", "pane_id": "p_a1", "title": "shell"}],
+    )
+    try:
+        a.configure(gw_client, {KEY: group()})
+
+        inspected = result_of(
+            rpc(gw_client, "tools/call", {"name": "inspect_tab", "arguments": {"tab_id": "t_a1"}})
+        )
+        assert inspected["structuredContent"]["link"] == "otty://pane/p_a1?line=10"
+
+        exec_res = result_of(
+            rpc(
+                gw_client,
+                "tools/call",
+                {
+                    "name": "exec_command",
+                    "arguments": {
+                        "tab_id": "t_a1",
+                        "expected_pane_id": "p_a1",
+                        "command": "pwd",
+                        "request_id": "exec-req-0001",
+                    },
+                },
+            )
+        )
+        assert not exec_res.get("isError")
+        assert exec_res["structuredContent"]["result"]["exit_code"] == 0
+        assert exec_res["structuredContent"]["result"]["stdout"] == "ok\n"
+
+        view_res = result_of(
+            rpc(
+                gw_client,
+                "tools/call",
+                {
+                    "name": "open_view",
+                    "arguments": {
+                        "instance_id": "inst_a",
+                        "target": "https://example.com",
+                        "mode": "view",
+                        "placement": "right",
+                        "request_id": "view-req-0001",
+                    },
+                },
+            )
+        )
+        assert not view_res.get("isError")
+        assert view_res["structuredContent"]["view"]["placement"] == "right"
+
+        bad_view = rpc(
+            gw_client,
+            "tools/call",
+            {
+                "name": "open_view",
+                "arguments": {
+                    "instance_id": "inst_a",
+                    "target": "relative/file.md",
+                    "request_id": "view-req-0002",
+                },
+            },
+        )
+        assert "error" in bad_view.json()
+    finally:
+        a.close()

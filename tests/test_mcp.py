@@ -223,9 +223,12 @@ def test_main_prints_routes_and_uses_only_existing_instance_token(
     "method,path,permission",
     [
         ("GET", "/api/v1/health", "read"),
+        ("POST", "/api/v1/view", "manage"),
         ("POST", "/api/v1/tabs", "manage"),
         ("DELETE", "/api/v1/tabs/t_agent", "manage"),
+        ("GET", "/api/v1/tabs/t_agent/link", "read"),
         ("POST", "/api/v1/tabs/t_agent/keys", "control"),
+        ("POST", "/api/v1/tabs/t_agent/exec", "control"),
         ("POST", "/api/v1/tabs/t_agent/type", None),
     ],
 )

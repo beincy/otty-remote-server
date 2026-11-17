@@ -25,12 +25,13 @@ export function internalRequest(mode, body) {
 
 export function mcpPermission(method, path) {
   if (method === "GET" && path === "/api/v1/health") return "read";
+  if (method === "POST" && path === "/api/v1/view") return "manage";
   if (path === "/api/v1/tabs") return { GET: "read", POST: "manage" }[method];
-  const match = /^\/api\/v1\/tabs\/t_[A-Za-z0-9_-]+(?:\/(screen|wait|messages|keys))?$/.exec(path);
+  const match = /^\/api\/v1\/tabs\/t_[A-Za-z0-9_-]+(?:\/(screen|wait|link|messages|keys|exec))?$/.exec(path);
   if (!match) return null;
-  if (method === "GET" && [undefined, "screen", "wait"].includes(match[1])) return "read";
+  if (method === "GET" && [undefined, "screen", "wait", "link"].includes(match[1])) return "read";
   if (method === "DELETE" && match[1] === undefined) return "manage";
-  if (method === "POST" && ["messages", "keys"].includes(match[1])) return "control";
+  if (method === "POST" && ["messages", "keys", "exec"].includes(match[1])) return "control";
   return null;
 }
 

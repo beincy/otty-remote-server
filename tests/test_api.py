@@ -92,6 +92,21 @@ class FakeCLI:
             return {"id": tab}
         if command == ("pane", "capture"):
             return self.text
+        if command == ("pane", "link"):
+            pane_id = args[3]
+            if "--last-command" in args and pane_id == "p_shell":
+                raise OttyError("No command recorded in pane", 404, 4)
+            if "--line" in args:
+                line = args[args.index("--line") + 1]
+                return {"pane": pane_id, "url": f"otty://pane/{pane_id}?line={line}"}
+            if "--last-command" in args:
+                return {"pane": pane_id, "url": f"otty://pane/{pane_id}?line=42"}
+            return {"pane": pane_id, "url": f"otty://pane/{pane_id}"}
+        if command == ("pane", "exec"):
+            cmd = args[args.index("--") + 1]
+            return {"exit_code": 0, "stdout": f"ran:{cmd}\n", "stderr": ""}
+        if args and args[0] == "view":
+            return {"opened": args[-1]}
         if command == ("pane", "send-text"):
             return {"queued": True, "pending": 1}
         if command == ("pane", "send-keys"):
@@ -551,3 +566,83 @@ def test_send_option_up_key(setup):
         ("pane", "send-text", "--pane", "p_agent", "--stdin", "--no-escape")
     ]
     assert cli.calls[-1][1] == "\x1b[1;3A"
+
+
+def test_tab_link_and_fallback(setup):
+    client, _, _ = setup
+    r1 = client.get("/api/v1/tabs/t_agent/link?last_command=true", headers=AUTH)
+    assert r1.status_code == 200
+    assert r1.json() == {
+        "tab_id": "t_agent",
+        "pane_id": "p_agent",
+        "url": "otty://pane/p_agent?line=42",
+    }
+
+    # p_shell has no OSC 133 history (CLI exit 4); falls back to plain pane link.
+    r2 = client.get("/api/v1/tabs/t_shell/link?last_command=true", headers=AUTH)
+    assert r2.status_code == 200
+    assert r2.json() == {
+        "tab_id": "t_shell",
+        "pane_id": "p_shell",
+        "url": "otty://pane/p_shell",
+    }
+
+
+def test_tab_exec_permissions_and_execution():
+    # Disabled by default when allow_shell_input is False.
+    with TestClient(create_app(Settings(TOKEN, "p_host"), FakeCLI())) as client:
+        r_forbidden = client.post(
+            "/api/v1/tabs/t_shell/exec",
+            headers=AUTH,
+            json={"command": "echo hi"},
+        )
+        assert r_forbidden.status_code == 403
+
+        r_agent = client.post(
+            "/api/v1/tabs/t_agent/exec",
+            headers=AUTH,
+            json={"command": "echo hi"},
+        )
+        assert r_agent.status_code == 409
+
+    with TestClient(
+        create_app(Settings(TOKEN, "p_host", allow_shell_input=True), FakeCLI())
+    ) as client:
+        r_ok = client.post(
+            "/api/v1/tabs/t_shell/exec",
+            headers=AUTH,
+            json={"command": "echo hi", "expected_pane_id": "p_shell"},
+        )
+        assert r_ok.status_code == 200
+        assert r_ok.json() == {
+            "tab_id": "t_shell",
+            "pane_id": "p_shell",
+            "exit_code": 0,
+            "stdout": "ran:echo hi\n",
+            "stderr": "",
+        }
+
+
+def test_open_view(setup):
+    client, cli, _ = setup
+    r_ok = client.post(
+        "/api/v1/view",
+        headers=AUTH,
+        json={"target": "https://example.com", "mode": "view", "placement": "right"},
+    )
+    assert r_ok.status_code == 200
+    assert r_ok.json()["target"] == "https://example.com"
+    assert (
+        "view",
+        "--mode=view",
+        "--right",
+        "--",
+        "https://example.com",
+    ) in [c[0] for c in cli.calls]
+
+    r_bad = client.post(
+        "/api/v1/view",
+        headers=AUTH,
+        json={"target": "relative/path.txt"},
+    )
+    assert r_bad.status_code == 422

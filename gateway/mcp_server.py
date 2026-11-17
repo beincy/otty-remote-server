@@ -272,6 +272,22 @@ def _absolute_path(value: Any) -> str:
     return value
 
 
+def _view_target(value: Any) -> str:
+    _no_nul(value)
+    if "\r" in value or "\n" in value:
+        raise InvalidParams("Line breaks are not allowed in view target")
+    if value.startswith(("http://", "https://")) or value.startswith("/"):
+        return value
+    raise InvalidParams("Use an absolute host path or http(s):// URL")
+
+
+def _no_line_breaks(value: Any) -> str:
+    _no_nul(value)
+    if "\r" in value or "\n" in value or not value.strip():
+        raise InvalidParams("Expected a single-line non-empty command")
+    return value
+
+
 def _no_nul(value: Any) -> str:
     if not isinstance(value, str) or not 1 <= len(value) or "\x00" in value:
         raise InvalidParams("Expected a non-empty string without NUL bytes")
@@ -447,7 +463,7 @@ async def inspect_tab_screen(
     screen = await api(
         router, session, "GET", f"/api/v1/tabs/{tab['id']}/screen", query
     )
-    return {
+    payload: dict[str, Any] = {
         "tab": tab,
         "screen": screen,
         "output_kind": "terminal_with_possible_session_history",
@@ -455,6 +471,19 @@ async def inspect_tab_screen(
         "task completion. History may be matched heuristically; use the current "
         "terminal for interactions.",
     }
+    try:
+        link = await api(
+            router,
+            session,
+            "GET",
+            f"/api/v1/tabs/{tab['id']}/link",
+            "last_command=true",
+        )
+        if isinstance(link, dict) and isinstance(link.get("url"), str) and link["url"]:
+            payload["link"] = link["url"]
+    except OperationError:
+        pass
+    return payload
 
 
 async def ensure_pane_support(router: GroupRouter, session: Any) -> None:
@@ -707,6 +736,79 @@ async def run_interrupt_tab(args, target, router):
 async def run_close_tab(args, target, router):
     closed = await api(router, target, "DELETE", f"/api/v1/tabs/{args['tab_id']}")
     return {"closed": closed}
+
+
+@tool(
+    "exec_command",
+    "control",
+    "Run a shell command in a plain shell tab and return structured exit_code, "
+    "stdout, and stderr. Requires shell input to be enabled on the host.",
+    {
+        "tab_id": TAB_ID(),
+        "expected_pane_id": PANE_ID(),
+        "command": FieldSpec(
+            {"type": "string", "minLength": 1, "maxLength": 8192},
+            validate=_no_line_breaks,
+        ),
+        "timeout_secs": f_int(1, 60, 30),
+        "request_id": REQUEST_ID(),
+    },
+    write=True,
+)
+async def run_exec_command(args, target, router):
+    await ensure_pane_support(router, target)
+    result = await api(
+        router,
+        target,
+        "POST",
+        f"/api/v1/tabs/{args['tab_id']}/exec",
+        "",
+        {
+            "command": args["command"],
+            "timeout_secs": args["timeout_secs"],
+            "expected_pane_id": args["expected_pane_id"],
+        },
+    )
+    return {"result": result}
+
+
+@tool(
+    "open_view",
+    "manage",
+    "Open an absolute host file path or http(s):// URL in an Otty pane on the "
+    "host.",
+    {
+        "instance_id": f_text(
+            200,
+            "Target instance ID from list_tabs",
+        ),
+        "target": FieldSpec(
+            {"type": "string", "minLength": 1, "maxLength": 4096},
+            validate=_view_target,
+        ),
+        "mode": f_enum(("view", "edit"), "view"),
+        "placement": f_enum(
+            ("new-tab", "new-window", "right", "left", "top", "bottom"),
+            "new-tab",
+        ),
+        "request_id": REQUEST_ID(),
+    },
+    write=True,
+)
+async def run_open_view(args, target, router):
+    result = await api(
+        router,
+        target,
+        "POST",
+        "/api/v1/view",
+        "",
+        {
+            "target": args["target"],
+            "mode": args["mode"],
+            "placement": args["placement"],
+        },
+    )
+    return {"view": result}
 
 
 # --- JSON-RPC layer ---------------------------------------------------------

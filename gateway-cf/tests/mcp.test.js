@@ -270,9 +270,19 @@ test("official SDK client initializes, lists and calls tools through the group e
   await client.connect(new StreamableHTTPClientTransport(new URL("https://otty.example/mcp"), {
     requestInit: { headers: { Authorization: `Bearer ${KEY}` } }, fetch: (url, init) => worker.fetch(new Request(url, init), f.env),
   }));
-  assert.equal((await client.listTools()).tools.length, 8);
+  assert.equal((await client.listTools()).tools.length, 10);
   const result = await client.callTool({ name: "inspect_tab", arguments: { tab_id: "t_b" } });
   assert.deepEqual(result.structuredContent.screen.lines, ["inst_b"]);
+  const execRes = await client.callTool({
+    name: "exec_command",
+    arguments: { tab_id: "t_b", expected_pane_id: "p_b", command: "pwd", request_id: "cf-exec-0001" },
+  });
+  assert.ok(!execRes.isError);
+  const viewRes = await client.callTool({
+    name: "open_view",
+    arguments: { instance_id: "inst_b", target: "https://example.com", mode: "view", placement: "right", request_id: "cf-view-0001" },
+  });
+  assert.ok(!viewRes.isError);
   await client.close();
 });
 

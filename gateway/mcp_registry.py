@@ -39,19 +39,22 @@ def mcp_permission(method: str, path: str) -> str | None:
     """Permission class of an API call, or None when MCP may not reach it."""
     if method == "GET" and path == "/api/v1/health":
         return "read"
+    if method == "POST" and path == "/api/v1/view":
+        return "manage"
     if path == "/api/v1/tabs":
         return {"GET": "read", "POST": "manage"}.get(method)
     match = re.fullmatch(
-        r"/api/v1/tabs/t_[A-Za-z0-9_-]+(?:/(screen|wait|messages|keys))?", path
+        r"/api/v1/tabs/t_[A-Za-z0-9_-]+(?:/(screen|wait|link|messages|keys|exec))?",
+        path,
     )
     if not match:
         return None
     suffix = match.group(1)
-    if method == "GET" and suffix in {None, "screen", "wait"}:
+    if method == "GET" and suffix in {None, "screen", "wait", "link"}:
         return "read"
     if method == "DELETE" and suffix is None:
         return "manage"
-    if method == "POST" and suffix in {"messages", "keys"}:
+    if method == "POST" and suffix in {"messages", "keys", "exec"}:
         return "control"
     return None
 
